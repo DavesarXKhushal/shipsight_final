@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { FolderOpen } from "lucide-react";
 import logoUrl from "../../logo.png";
 import { Button } from "@/components/ui/button";
@@ -22,11 +22,13 @@ type LogState = { version: number; updatedAt: string; barcodes: string[]; events
 const Index = () => {
   const [barcode, setBarcode] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [currentRecordingBarcode, setCurrentRecordingBarcode] = useState<string>("");
   const [outputFolder, setOutputFolder] = useState<string>("");
   const [dirHandle, setDirHandle] = useState<any | null>(null);
   const [log, setLog] = useState<LogState>({ version: 1, updatedAt: new Date().toISOString(), barcodes: [], events: [] });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const controlsRef = useRef<RecordingControlsRef | null>(null);
+  const switchInProgressRef = useRef<boolean>(false);
 
   const handleFolderSelect = async () => {
     try {
@@ -105,38 +107,47 @@ const Index = () => {
       status: "info",
       message: `Reserved barcode: ${normalized}`
     }]);
-    const newEntry: LogEntry = { time: new Date().toLocaleTimeString(), status: "info", message: `Reserved barcode: ${normalized}` };
-    const updatedWithEvent: LogState = { ...updated, events: [...updated.events, newEntry] };
-    setLog(updatedWithEvent);
-    await appendTextLog(`[${new Date().toISOString()}] EVENT status=${newEntry.status} message="${newEntry.message}"`);
     return true;
   };
 
   const handleSubmitBarcode = async (code: string): Promise<boolean> => {
-    // If same barcode as current while recording: stop only, do not restart
-    if (isRecording && controlsRef.current && code.trim() === barcode.trim() && code.trim().length > 0) {
+    const normalized = code.trim();
+    if (!normalized) return false;
+
+    // If currently recording and submitting the SAME barcode: stop only, no restart
+    if (isRecording && controlsRef.current && normalized === currentRecordingBarcode && normalized.length > 0) {
       await controlsRef.current.stop();
-      toast.error("Duplicate barcode entered; recording stopped, not restarted.");
+      toast.error("Same barcode entered; recording stopped and not restarted.");
       return false;
     }
-    // If currently recording with different barcode, stop before starting new
-    if (isRecording && controlsRef.current) {
-      await controlsRef.current.stop();
-    }
-    // Attempt to start recording with this barcode
+
     if (!outputFolder) {
       toast.error("Please select an output folder first");
       return false;
     }
-    // Reserve uniqueness via existing logic
-    const ok = await reserveBarcode(code);
-    if (!ok) {
-      // If duplicate, do not start; if currently recording, keep it running
+
+    if (isRecording) {
+      // When switching to a different barcode, reserve first; only stop if reserve succeeds
+      const ok = await reserveBarcode(normalized);
+      if (!ok) {
+        // Keep current recording running on duplicate or invalid
+        return false;
+      }
+      if (controlsRef.current) {
+        await controlsRef.current.stop();
+        const started = await controlsRef.current.startWithBarcode(normalized);
+        if (started) setCurrentRecordingBarcode(normalized);
+        return started;
+      }
       return false;
     }
-    // Start new recording and clear input handled by BarcodeInput
+
+    // Not currently recording: reserve then start
+    const ok = await reserveBarcode(normalized);
+    if (!ok) return false;
     if (controlsRef.current) {
-      const started = await controlsRef.current.startWithBarcode(code);
+      const started = await controlsRef.current.startWithBarcode(normalized);
+      if (started) setCurrentRecordingBarcode(normalized);
       return started;
     }
     return false;
@@ -172,25 +183,34 @@ const Index = () => {
 
   const handleLogEntry = (entry: LogEntry) => {
     setLogEntries(prev => [...prev, entry]);
-    // persist to session.log (text)
     const updated: LogState = { ...log, events: [...log.events, entry], updatedAt: new Date().toISOString() };
     setLog(updated);
-    // normalize event messages for text log and barcode tracking
     const iso = new Date().toISOString();
-    let line = `[${iso}] EVENT status=${entry.status} message="${entry.message}"`;
-    // try to extract barcode for structured lines and tracking
-    let codeMatch = entry.message.match(/Reserved barcode:\s*(\S+)/i) || entry.message.match(/Started recording for barcode:\s*(\S+)/i);
-    if (!codeMatch && entry.message.startsWith("Recording saved:")) {
+    // Simplified log lines: START / STOP / SAVED only
+    if (/Started recording for barcode:/i.test(entry.message)) {
+      const m = entry.message.match(/Started recording for barcode:\s*(\S+)/i);
+      if (m) {
+        setCurrentRecordingBarcode(m[1]);
+        appendTextLog(`[${iso}] START barcode=${m[1]}`).catch(() => {});
+      }
+      return;
+    }
+    if (/Recording stopped for barcode:/i.test(entry.message)) {
+      const m = entry.message.match(/Recording stopped for barcode:\s*(\S+)/i);
+      if (m) {
+        appendTextLog(`[${iso}] STOP barcode=${m[1]}`).catch(() => {});
+      }
+      return;
+    }
+    if (entry.message.startsWith("Recording saved:")) {
       const fname = entry.message.replace("Recording saved:", "").trim();
       const bc = fname.replace(/\.mp4$/i, "").trim();
-      codeMatch = ["", bc] as any;
-      line = `[${iso}] SAVED barcode=${bc} file=${fname}`;
-    } else if (codeMatch && /Started recording/i.test(entry.message)) {
-      const bc = codeMatch[1];
-      line = `[${iso}] START barcode=${bc}`;
+      appendTextLog(`[${iso}] SAVED barcode=${bc} file=${fname}`).catch(() => {});
+      return;
     }
-    appendTextLog(line).catch(() => {});
   };
+
+  // Removed auto-switch on typing; recording actions now happen only on Enter or Start button
 
   return (
     <div className="min-h-screen bg-[hsl(var(--background))] text-foreground overflow-hidden">
@@ -256,10 +276,11 @@ const Index = () => {
                 <RecordingControls 
                   ref={controlsRef}
                   barcode={barcode}
-                  onRecordingStateChange={setIsRecording}
+                  onRecordingStateChange={(rec) => { setIsRecording(rec); if (!rec) setCurrentRecordingBarcode(""); }}
                   onLogEntry={handleLogEntry}
                   enabled={Boolean(outputFolder)}
                   onReserveBarcode={reserveBarcode}
+                  onStartBarcode={handleSubmitBarcode}
                   directoryHandle={dirHandle}
                 />
               </div>
