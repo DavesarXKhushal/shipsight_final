@@ -10,6 +10,7 @@ interface RecordingControlsProps {
   enabled?: boolean;
   onReserveBarcode?: (code: string) => Promise<boolean>;
   directoryHandle?: any | null;
+  onStartBarcode?: (code: string) => Promise<boolean>;
 }
 
 export interface LogEntry {
@@ -30,6 +31,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
   enabled = true,
   onReserveBarcode,
   directoryHandle,
+  onStartBarcode,
 }: RecordingControlsProps, ref) => {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -125,7 +127,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         onLogEntry({
           time: new Date().toLocaleTimeString(),
           status: "success",
-          message: `Recording stopped`
+          message: `Recording stopped for barcode: ${currentCode}`
         });
         if (stopResolveRef.current) {
           stopResolveRef.current();
@@ -184,8 +186,8 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
     <div className="flex gap-4">
       <Button
         variant="glass-white"
-        onClick={() => startRecording()}
-        disabled={isRecording || !enabled}
+        onClick={async () => { if (onStartBarcode) { await onStartBarcode(barcode); } else { await startRecording(); } }}
+        disabled={!enabled}
         className="flex-1 h-14 text-base font-semibold shadow-lg"
       >
         <Circle className="w-5 h-5 mr-1 text-white" />
