@@ -139,15 +139,6 @@ export const CameraPreview = ({ enabled = true }: { enabled?: boolean }) => {
           <Button
             variant="glass-white"
             size="icon"
-            onClick={downloadSnapshot}
-            title="Download Snapshot"
-            disabled={!enabled || !hasCamera}
-          >
-            <Download className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="glass-white"
-            size="icon"
             onClick={toggleFullscreen}
             title="Fullscreen"
             disabled={!enabled || !hasCamera}
