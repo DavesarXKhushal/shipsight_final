@@ -3,13 +3,26 @@ import { Camera, RefreshCw, Download, Maximize2, CameraIcon, FlipHorizontal } fr
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
-export const CameraPreview = ({ enabled = true }: { enabled?: boolean }) => {
+interface CameraPreviewProps {
+  enabled?: boolean;
+  isRecording?: boolean;
+  elapsedTime?: number;
+}
+
+export const CameraPreview = ({ enabled = true, isRecording = false, elapsedTime = 0 }: CameraPreviewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [hasCamera, setHasCamera] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
   const [isFlipped, setIsFlipped] = useState(false);
+
+  // Format elapsed time as MM:SS
+  const formatElapsedTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   useEffect(() => {
     if (enabled) {
@@ -159,13 +172,24 @@ export const CameraPreview = ({ enabled = true }: { enabled?: boolean }) => {
 
       <div className="relative overflow-hidden rounded-3xl border border-[var(--glass-border)] bg-black/60 backdrop-blur-sm shadow-[var(--shadow-lg)]">
         {hasCamera ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className={"w-full aspect-video object-cover " + (isFlipped ? "scale-x-[-1]" : "")}
-          />
+          <>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className={"w-full aspect-video object-cover " + (isFlipped ? "scale-x-[-1]" : "")}
+            />
+            {/* Timer Overlay */}
+            {isRecording && (
+              <div className="absolute top-4 left-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-black/40 to-black/60 backdrop-blur-md border border-white/10 shadow-lg">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                <span className="text-white font-semibold text-sm tracking-wide">
+                  REC {formatElapsedTime(elapsedTime)}
+                </span>
+              </div>
+            )}
+          </>
         ) : (
           <div className="w-full aspect-video flex items-center justify-center bg-gradient-to-br from-primary/5 to-accent/5">
             <div className="text-center space-y-3">

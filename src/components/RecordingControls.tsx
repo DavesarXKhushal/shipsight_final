@@ -1,5 +1,5 @@
-import { useState, useRef, forwardRef, useImperativeHandle } from "react";
-import { Circle, Square } from "lucide-react";
+import { useState, useRef, forwardRef, useImperativeHandle, useEffect } from "react";
+import { Circle, Square, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -34,10 +34,45 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
   onStartBarcode,
 }: RecordingControlsProps, ref) => {
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingStartTime, setRecordingStartTime] = useState<Date | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const containerRef = useRef<string>("webm");
   const stopResolveRef = useRef<(() => void) | null>(null);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Timer effect to update elapsed time every second
+  useEffect(() => {
+    if (isRecording && recordingStartTime) {
+      timerIntervalRef.current = setInterval(() => {
+        const now = new Date();
+        const elapsed = Math.floor((now.getTime() - recordingStartTime.getTime()) / 1000);
+        setElapsedTime(elapsed);
+      }, 1000);
+    } else {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      if (!isRecording) {
+        setElapsedTime(0);
+      }
+    }
+
+    return () => {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    };
+  }, [isRecording, recordingStartTime]);
+
+  // Format elapsed time as MM:SS
+  const formatElapsedTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const startRecording = async (codeOverride?: string, skipReserve?: boolean): Promise<boolean> => {
     if (!enabled) {
@@ -137,6 +172,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
 
       mediaRecorder.start();
       setIsRecording(true);
+      setRecordingStartTime(new Date());
       onRecordingStateChange(true);
       
       toast.success("Recording started");
@@ -158,12 +194,14 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
     }
   };
 
-  const stopRecording = (): Promise<void> => {
+  const stopRecording = async (): Promise<void> => {
     return new Promise<void>((resolve) => {
       if (mediaRecorderRef.current && isRecording) {
         stopResolveRef.current = resolve;
         mediaRecorderRef.current.stop();
         setIsRecording(false);
+        setRecordingStartTime(null);
+        setElapsedTime(0);
         onRecordingStateChange(false);
         toast.success("Recording stopped");
       } else {
@@ -183,7 +221,8 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
   }));
 
   return (
-    <div className="flex gap-4">
+    <div className="flex items-center gap-4">
+      {/* Recording Controls */}
       <Button
         variant="glass-white"
         onClick={async () => { if (onStartBarcode) { await onStartBarcode(barcode); } else { await startRecording(); } }}
@@ -193,6 +232,19 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         <Circle className="w-5 h-5 mr-1 text-white" />
         Start Recording
       </Button>
+      
+      {/* Timer Display - Inline with buttons */}
+      {isRecording && (
+        <div className="flex items-center justify-center px-6 py-3 rounded-xl bg-gradient-to-r from-white/5 to-white/10 backdrop-blur-md border border-white/10 shadow-lg min-w-[120px]">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+            <span className="text-white font-semibold text-lg tracking-wide">
+              {formatElapsedTime(elapsedTime)}
+            </span>
+          </div>
+        </div>
+      )}
+      
       <Button
         variant="glass-white"
         onClick={() => { void stopRecording(); }}
