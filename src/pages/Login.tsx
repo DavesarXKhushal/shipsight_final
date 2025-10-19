@@ -14,9 +14,33 @@ export const Login = ({ onLogin }: LoginProps) => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Demo credentials
-  const DEMO_EMAIL = "demo@shipsight.com";
-  const DEMO_PASSWORD = "shipsight2024";
+  // Demo user accounts with both email and username login
+  const DEMO_USERS = [
+    {
+      username: "oora",
+      email: "oora@shipsight.com",
+      password: "OoraShip2025!",
+      displayName: "Oora"
+    },
+    {
+      username: "as international",
+      email: "as.international@shipsight.com", 
+      password: "AsIntl2025!",
+      displayName: "AS International"
+    },
+    {
+      username: "ss international",
+      email: "ss.international@shipsight.com",
+      password: "SsIntl2025!",
+      displayName: "SS International"
+    },
+    {
+      username: "admin",
+      email: "admin@shipsight.com",
+      password: "AdminShip2025!",
+      displayName: "Administrator"
+    }
+  ];
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,8 +49,15 @@ export const Login = ({ onLogin }: LoginProps) => {
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    if (email === DEMO_EMAIL && password === DEMO_PASSWORD) {
-      toast.success("Welcome to ShipSight!");
+    // Check if login matches any demo user (by email or username)
+    const user = DEMO_USERS.find(user => 
+      (email.toLowerCase() === user.email.toLowerCase() || 
+       email.toLowerCase() === user.username.toLowerCase()) && 
+      password === user.password
+    );
+
+    if (user) {
+      toast.success(`Welcome to ShipSight, ${user.displayName}!`);
       onLogin(true);
     } else {
       toast.error("Invalid credentials. Please try again.");
@@ -75,18 +106,18 @@ export const Login = ({ onLogin }: LoginProps) => {
 
             {/* Login Form */}
             <form onSubmit={handleLogin} className="space-y-6">
-              {/* Email Field */}
+              {/* Email/Username Field */}
               <div className="space-y-2">
                 <label htmlFor="email" className="text-sm font-medium text-foreground">
-                  Email Address
+                  Email Address or Username
                 </label>
                 <input
                   id="email"
-                  type="email"
+                  type="text"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full px-4 py-3 rounded-xl bg-[var(--glass-light)] border border-[var(--glass-border)] text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200"
-                  placeholder="Enter your email"
+                  placeholder="Enter your email or username"
                   required
                 />
               </div>
