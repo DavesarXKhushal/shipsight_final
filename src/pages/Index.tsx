@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, LogOut } from "lucide-react";
 import logoUrl from "../../logo.png";
 import { Button } from "@/components/ui/button";
 import { CameraPreview } from "@/components/CameraPreview";
@@ -17,11 +17,17 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
+
 type LogState = { version: number; updatedAt: string; barcodes: string[]; events: LogEntry[] };
 
-const Index = () => {
+interface IndexProps {
+  onLogout?: () => void;
+}
+
+const Index = ({ onLogout }: IndexProps) => {
   const [barcode, setBarcode] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const [currentRecordingBarcode, setCurrentRecordingBarcode] = useState<string>("");
   const [outputFolder, setOutputFolder] = useState<string>("");
   const [dirHandle, setDirHandle] = useState<any | null>(null);
@@ -29,6 +35,34 @@ const Index = () => {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const controlsRef = useRef<RecordingControlsRef | null>(null);
   const switchInProgressRef = useRef<boolean>(false);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingStartTimeRef = useRef<Date | null>(null);
+
+  // Timer effect to track elapsed time during recording
+  useEffect(() => {
+    if (isRecording && recordingStartTimeRef.current) {
+      timerIntervalRef.current = setInterval(() => {
+        const now = new Date();
+        const elapsed = Math.floor((now.getTime() - recordingStartTimeRef.current!.getTime()) / 1000);
+        setElapsedTime(elapsed);
+      }, 1000);
+    } else {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      if (!isRecording) {
+        setElapsedTime(0);
+        recordingStartTimeRef.current = null;
+      }
+    }
+
+    return () => {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    };
+  }, [isRecording]);
 
   const handleFolderSelect = async () => {
     try {
@@ -226,27 +260,42 @@ const Index = () => {
           <div className="container mx-auto px-8 py-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <img src={logoUrl} alt="ShipSight Logo" className="w-10 h-10 object-contain" />
+                <div className="w-12 h-12 rounded-xl bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] shadow-[var(--shadow-lg)] flex items-center justify-center">
+                  <img src={logoUrl} alt="ShipSight Logo" className="w-8 h-8 object-contain" />
+                </div>
                 <div>
-                  <h1 className="text-xl font-bold tracking-tight">
+                  <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
                     ShipSight
                   </h1>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground font-medium">
                     One platform for all your shipments
                   </p>
                 </div>
               </div>
               
-              <Button
-                variant="glass-white"
-                onClick={handleFolderSelect}
-                className="gap-2"
-              >
-                <FolderOpen className="w-4 h-4" />
-                <span className="hidden sm:inline">
-                  {outputFolder || "Select Folder"}
-                </span>
-              </Button>
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="glass-white"
+                  onClick={handleFolderSelect}
+                  className="gap-2"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  <span className="hidden sm:inline">
+                    {outputFolder || "Select Folder"}
+                  </span>
+                </Button>
+                
+                <Button
+                  variant="glass-white"
+                  onClick={onLogout}
+                  className="gap-2"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="hidden sm:inline">
+                    Logout
+                  </span>
+                </Button>
+              </div>
               {/* Removed header log button per request; moved beside Session Log */}
             </div>
           </div>
@@ -259,7 +308,11 @@ const Index = () => {
             <div className="lg:col-span-2 space-y-6">
               {/* Camera Preview */}
               <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-lg)] hover:shadow-[var(--shadow-glow)] transition-all duration-300">
-                <CameraPreview enabled={Boolean(outputFolder)} />
+                <CameraPreview 
+                  enabled={Boolean(outputFolder)} 
+                  isRecording={isRecording}
+                  elapsedTime={elapsedTime}
+                />
               </div>
 
               {/* Barcode Input */}
@@ -276,7 +329,14 @@ const Index = () => {
                 <RecordingControls 
                   ref={controlsRef}
                   barcode={barcode}
-                  onRecordingStateChange={(rec) => { setIsRecording(rec); if (!rec) setCurrentRecordingBarcode(""); }}
+                  onRecordingStateChange={(rec) => { 
+                    setIsRecording(rec); 
+                    if (rec) {
+                      recordingStartTimeRef.current = new Date();
+                    } else {
+                      setCurrentRecordingBarcode("");
+                    }
+                  }}
                   onLogEntry={handleLogEntry}
                   enabled={Boolean(outputFolder)}
                   onReserveBarcode={reserveBarcode}
