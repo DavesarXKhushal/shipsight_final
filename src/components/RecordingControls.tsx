@@ -181,7 +181,16 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
           }
         }
 
-        const saveToFolder = async () => {
+        const downloadBlob = (b: Blob, name: string) => {
+          const url = URL.createObjectURL(b);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = name;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        };
+
+        const saveToFolder = async (): Promise<boolean> => {
           if (!directoryHandle) {
             toast.error("Select an output folder to save recordings");
             onLogEntry({
@@ -189,9 +198,21 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
               status: "error",
               message: "No output folder selected — recording not saved"
             });
-            return;
+            return false;
           }
           try {
+            if (typeof directoryHandle.requestPermission === "function") {
+              const perm = await directoryHandle.requestPermission({ mode: "readwrite" });
+              if (perm !== "granted") {
+                toast.error("Folder permission denied — cannot save");
+                onLogEntry({
+                  time: new Date().toLocaleTimeString(),
+                  status: "error",
+                  message: "Folder permission denied"
+                });
+                return false;
+              }
+            }
             const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
             const writable = await fileHandle.createWritable();
             await writable.write(blob);
@@ -202,6 +223,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
               message: `Recording saved to folder: ${currentCode}.${ext}`
             });
             toast.success("Recording saved to selected folder");
+            return true;
           } catch (e) {
             console.error("Save to folder failed", e);
             toast.error("Failed to save to selected folder");
@@ -210,10 +232,21 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
               status: "error",
               message: "Failed to save recording to folder"
             });
+            return false;
           }
         };
 
-        await saveToFolder();
+        const saved = await saveToFolder();
+        if (!saved) {
+          // Fallback: ensure user still gets the recording via browser download
+          downloadBlob(blob, fileName);
+          onLogEntry({
+            time: new Date().toLocaleTimeString(),
+            status: "info",
+            message: `Recording downloaded: ${currentCode}.${ext}`
+          });
+          toast.message("Recording downloaded to your default folder");
+        }
         
         stream.getTracks().forEach(track => track.stop());
         
