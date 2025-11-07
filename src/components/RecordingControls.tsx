@@ -127,8 +127,19 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
       };
 
       mediaRecorder.onstop = async () => {
-        const type = selected;
-        let blob = new Blob(chunksRef.current, { type });
+        // Guard: ensure we have data
+        if (!chunksRef.current || chunksRef.current.length === 0) {
+          onLogEntry({
+            time: new Date().toLocaleTimeString(),
+            status: "error",
+            message: "No recording data captured"
+          });
+          toast.error("No recording data captured");
+          return;
+        }
+        // Ensure blob has a clean MP4 mime type label for broad download compatibility
+        const type = "video/mp4";
+        const blob = new Blob(chunksRef.current, { type });
         const ext = "mp4";
         const fileName = `${currentCode}.${ext}`;
 
@@ -137,7 +148,9 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
           const a = document.createElement("a");
           a.href = url;
           a.download = name;
+          document.body.appendChild(a);
           a.click();
+          a.remove();
           setTimeout(() => URL.revokeObjectURL(url), 2000);
         };
 
