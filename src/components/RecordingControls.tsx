@@ -148,8 +148,12 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
             await ffmpeg.exec([
               "-i", "input.webm",
               "-c:v", "libx264",
-              "-preset", "veryfast",
-              "-crf", "22",
+              "-preset", "ultrafast",
+              "-crf", "20",
+              "-pix_fmt", "yuv420p",
+              "-r", "30",
+              "-b:v", "8000k",
+              "-an",
               "-movflags", "faststart",
               "output.mp4",
             ]);
@@ -175,33 +179,38 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         }
 
         const saveToFolder = async () => {
-          if (!directoryHandle) return false;
+          if (!directoryHandle) {
+            toast.error("Select an output folder to save recordings");
+            onLogEntry({
+              time: new Date().toLocaleTimeString(),
+              status: "error",
+              message: "No output folder selected — recording not saved"
+            });
+            return;
+          }
           try {
             const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
             const writable = await fileHandle.createWritable();
             await writable.write(blob);
             await writable.close();
-            return true;
+            onLogEntry({
+              time: new Date().toLocaleTimeString(),
+              status: "success",
+              message: `Recording saved to folder: ${currentCode}.${ext}`
+            });
+            toast.success("Recording saved to selected folder");
           } catch (e) {
             console.error("Save to folder failed", e);
-            return false;
+            toast.error("Failed to save to selected folder");
+            onLogEntry({
+              time: new Date().toLocaleTimeString(),
+              status: "error",
+              message: "Failed to save recording to folder"
+            });
           }
         };
 
-        saveToFolder().then((saved) => {
-          if (!saved) {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = fileName;
-            a.click();
-          }
-          onLogEntry({
-            time: new Date().toLocaleTimeString(),
-            status: "success",
-            message: `Recording saved: ${currentCode}.${ext}`
-          });
-        });
+        await saveToFolder();
         
         stream.getTracks().forEach(track => track.stop());
         

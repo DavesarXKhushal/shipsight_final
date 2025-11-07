@@ -59,6 +59,16 @@ const Index = ({ onLogout }: IndexProps) => {
       toast.error(`Please capture in order. Next: ${nextTag}`);
       return;
     }
+    // Require barcode scanned
+    if (!barcode.trim()) {
+      toast.error("Scan barcode before capturing photos");
+      return;
+    }
+    // Require output folder selected
+    if (!dirHandle) {
+      toast.error("Select output folder before capturing photos");
+      return;
+    }
     // Prevent capturing while recording video
     if (isRecording) {
       toast.error("Stop recording before capturing reverse photos");
@@ -70,7 +80,7 @@ const Index = ({ onLogout }: IndexProps) => {
       return;
     }
     // Save snapshot to folder immediately and log to session.log
-    const code = (currentRecordingBarcode || barcode || "reverse").trim() || "reverse";
+    const code = barcode.trim();
     let savedName: string | null = null;
     try {
       savedName = await saveSnapshotToFolder(code, tag, dataUrl);
@@ -138,7 +148,7 @@ const Index = ({ onLogout }: IndexProps) => {
     toast.success("Reverse photo capture complete");
     try {
       const zip = new JSZip();
-      const code = (currentRecordingBarcode || barcode || "reverse").trim() || "reverse";
+      const code = barcode.trim();
       for (const tag of reverseOrder) {
         const img = reverseImages[tag];
         if (img) {
@@ -202,20 +212,23 @@ const Index = ({ onLogout }: IndexProps) => {
       toast.error("ZIP not ready");
       return;
     }
-    // Save to folder if available, and download regardless
+    // Save strictly to the selected folder, no fallback download
+    if (!dirHandle) {
+      toast.error("Select output folder to save ZIP");
+      return;
+    }
     const saved = await saveZipToFolder(reverseZipBlob, reverseZipName);
-    downloadBlob(reverseZipBlob, reverseZipName);
     setLogEntries(prev => [
       ...prev,
       {
         time: new Date().toLocaleTimeString(),
-        status: saved ? "success" : "info",
-        message: saved ? `ZIP saved: ${reverseZipName}` : `ZIP downloaded: ${reverseZipName}`,
+        status: saved ? "success" : "error",
+        message: saved ? `ZIP saved: ${reverseZipName}` : `Failed to save ZIP`,
       },
     ]);
 
     if (choice === "email") {
-      const code = (currentRecordingBarcode || barcode || "reverse").trim() || "reverse";
+      const code = barcode.trim();
       const subject = encodeURIComponent(`Reverse photos for ${code}`);
       const body = encodeURIComponent(`Please find the ZIP file (${reverseZipName}). If not attached automatically, it has been downloaded on your device.`);
       window.location.href = `mailto:?subject=${subject}&body=${body}`;
