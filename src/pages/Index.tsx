@@ -661,7 +661,7 @@ const Index = ({ onLogout }: IndexProps) => {
                         const captureDisabled = !isNext || isDone;
                         const retakeDisabled = !isDone;
                         return (
-                          <div key={t} className="flex gap-2 items-stretch">
+                          <div key={t} className="flex gap-2 items-center">
                             <Button
                               variant="glass-white"
                               className={`h-12 w-full px-4 text-sm font-semibold shadow-lg flex-1 items-center justify-center ${isNext ? 'ring-2 ring-primary shadow-[var(--shadow-glow)]' : ''}`}
@@ -673,7 +673,7 @@ const Index = ({ onLogout }: IndexProps) => {
                             </Button>
                             <Button
                               variant="glass-white"
-                              className="h-12 w-full px-4 text-sm font-semibold shadow-lg flex-1 items-center justify-center"
+                              className="h-10 w-10 p-0 text-sm font-semibold shadow-lg items-center justify-center"
                               onClick={() => handleCapture(t, { retake: true })}
                               disabled={retakeDisabled}
                               title={`Reload ${t}`}

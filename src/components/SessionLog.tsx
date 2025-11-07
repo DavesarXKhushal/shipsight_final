@@ -28,6 +28,20 @@ export const SessionLog = ({ entries, onDownloadLog }: SessionLogProps) => {
     }
   }, [entries]);
 
+  // Ensure auto-scroll on initial mount and when the log container resizes
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Initial scroll
+    el.scrollTo({ top: el.scrollHeight });
+    // Scroll on resize (e.g., layout changes when panels open/close)
+    const ro = new ResizeObserver(() => {
+      el.scrollTo({ top: el.scrollHeight });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <div className="h-full flex flex-col bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-6 shadow-[var(--shadow-lg)]">
       <div className="flex items-center justify-between mb-5 pb-4 border-b border-[var(--glass-border)]">
