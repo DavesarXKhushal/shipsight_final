@@ -98,19 +98,27 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         audio: false 
       });
       
-      // Strict MP4-only mode: record directly to MP4, no transcoding
-      const candidate = "video/mp4;codecs=h264";
+      // Prefer MP4 when available, otherwise fall back to WebM (no audio)
+      const candidates = [
+        "video/mp4;codecs=h264",
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm",
+      ];
       let selected: string | undefined;
       // @ts-ignore
-      if (window.MediaRecorder && MediaRecorder.isTypeSupported(candidate)) {
-        selected = candidate;
+      if (window.MediaRecorder) {
+        for (const c of candidates) {
+          // @ts-ignore
+          if (MediaRecorder.isTypeSupported(c)) { selected = c; break; }
+        }
       }
       if (!selected) {
-        toast.error("Your browser cannot record MP4 directly. Please use Safari or a supported browser.");
+        toast.error("This browser cannot record video. Try Chrome or Safari.");
         onLogEntry({
           time: new Date().toLocaleTimeString(),
           status: "error",
-          message: "MP4 recording not supported by this browser"
+          message: "No supported recording mime type"
         });
         return false;
       }
@@ -137,10 +145,10 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
           toast.error("No recording data captured");
           return;
         }
-        // Ensure blob has a clean MP4 mime type label for broad download compatibility
-        const type = "video/mp4";
+        // Use the selected container type; default WebM on Chrome/Firefox, MP4 on Safari
+        const type = selected ?? "video/webm";
         const blob = new Blob(chunksRef.current, { type });
-        const ext = "mp4";
+        const ext = (selected && selected.includes("mp4")) ? "mp4" : "webm";
         const fileName = `${currentCode}.${ext}`;
 
         const downloadBlob = (b: Blob, name: string) => {
@@ -154,63 +162,14 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
           setTimeout(() => URL.revokeObjectURL(url), 2000);
         };
 
-        const saveToFolder = async (): Promise<boolean> => {
-          if (!directoryHandle) {
-            toast.error("Select an output folder to save recordings");
-            onLogEntry({
-              time: new Date().toLocaleTimeString(),
-              status: "error",
-              message: "No output folder selected — recording not saved"
-            });
-            return false;
-          }
-          try {
-            if (typeof directoryHandle.requestPermission === "function") {
-              const perm = await directoryHandle.requestPermission({ mode: "readwrite" });
-              if (perm !== "granted") {
-                toast.error("Folder permission denied — cannot save");
-                onLogEntry({
-                  time: new Date().toLocaleTimeString(),
-                  status: "error",
-                  message: "Folder permission denied"
-                });
-                return false;
-              }
-            }
-            const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(blob);
-            await writable.close();
-            onLogEntry({
-              time: new Date().toLocaleTimeString(),
-              status: "success",
-              message: `Recording saved: ${fileName}`
-            });
-            toast.success("Recording saved to selected folder");
-            return true;
-          } catch (e) {
-            console.error("Save to folder failed", e);
-            toast.error("Failed to save to selected folder");
-            onLogEntry({
-              time: new Date().toLocaleTimeString(),
-              status: "error",
-              message: "Failed to save recording to folder"
-            });
-            return false;
-          }
-        };
-
-        const saved = await saveToFolder();
-        if (!saved) {
-          // Fallback: ensure user still gets the recording via browser download
-          downloadBlob(blob, fileName);
-          onLogEntry({
-            time: new Date().toLocaleTimeString(),
-            status: "info",
-            message: `Recording downloaded: ${currentCode}.${ext}`
-          });
-          toast.message("Recording downloaded to your default folder");
-        }
+        // Always download immediately as requested (no folder save for now)
+        downloadBlob(blob, fileName);
+        onLogEntry({
+          time: new Date().toLocaleTimeString(),
+          status: "success",
+          message: `Recording downloaded: ${fileName}`
+        });
+        toast.success("Recording downloaded");
         
         stream.getTracks().forEach(track => track.stop());
         
