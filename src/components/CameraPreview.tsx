@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import { Camera, RefreshCw, Download, Maximize2, CameraIcon, FlipHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -8,8 +8,11 @@ interface CameraPreviewProps {
   isRecording?: boolean;
   elapsedTime?: number;
 }
+export type CameraPreviewRef = {
+  captureSnapshot: () => string | null;
+};
 
-export const CameraPreview = ({ enabled = true, isRecording = false, elapsedTime = 0 }: CameraPreviewProps) => {
+export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({ enabled = true, isRecording = false, elapsedTime = 0 }: CameraPreviewProps, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [hasCamera, setHasCamera] = useState(false);
@@ -107,6 +110,27 @@ export const CameraPreview = ({ enabled = true, isRecording = false, elapsedTime
     }
   };
 
+  useImperativeHandle(ref, () => ({
+    captureSnapshot: () => {
+      const video = videoRef.current;
+      if (!video) return null;
+      const w = video.videoWidth || 1280;
+      const h = video.videoHeight || 720;
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(video, 0, 0, w, h);
+      try {
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+        return dataUrl;
+      } catch {
+        return null;
+      }
+    },
+  }), []);
+
   const toggleFullscreen = () => {
     if (videoRef.current) {
       if (videoRef.current.requestFullscreen) {
@@ -116,7 +140,7 @@ export const CameraPreview = ({ enabled = true, isRecording = false, elapsedTime
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 h-full flex flex-col">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-2xl bg-[var(--glass-medium)] border border-[var(--glass-border)]">
@@ -170,7 +194,7 @@ export const CameraPreview = ({ enabled = true, isRecording = false, elapsedTime
         </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-3xl border border-[var(--glass-border)] bg-black/60 backdrop-blur-sm shadow-[var(--shadow-lg)]">
+      <div className="relative overflow-hidden rounded-3xl border border-[var(--glass-border)] bg-black/60 backdrop-blur-sm shadow-[var(--shadow-lg)] flex-1">
         {hasCamera ? (
           <>
             <video
@@ -178,12 +202,12 @@ export const CameraPreview = ({ enabled = true, isRecording = false, elapsedTime
               autoPlay
               playsInline
               muted
-              className={"w-full aspect-video object-cover " + (isFlipped ? "scale-x-[-1]" : "")}
+              className={"w-full h-full object-cover " + (isFlipped ? "scale-x-[-1]" : "")}
             />
             {/* Timer Overlay */}
             {isRecording && (
               <div className="absolute top-4 left-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-black/40 to-black/60 backdrop-blur-md border border-white/10 shadow-lg">
-                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                <div className="w-2 h-2 bg-red-500 rounded-full" style={{ animation: 'blink-recording 1s infinite' }}></div>
                 <span className="text-white font-semibold text-sm tracking-wide">
                   REC {formatElapsedTime(elapsedTime)}
                 </span>
@@ -191,7 +215,7 @@ export const CameraPreview = ({ enabled = true, isRecording = false, elapsedTime
             )}
           </>
         ) : (
-          <div className="w-full aspect-video flex items-center justify-center bg-gradient-to-br from-primary/5 to-accent/5">
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/5 to-accent/5">
             <div className="text-center space-y-3">
               <div className="p-4 rounded-2xl bg-[var(--glass-medium)] border border-[var(--glass-border)] inline-block">
                 <Camera className="w-10 h-10 text-muted-foreground/50" />
@@ -203,4 +227,4 @@ export const CameraPreview = ({ enabled = true, isRecording = false, elapsedTime
       </div>
     </div>
   );
-};
+});
