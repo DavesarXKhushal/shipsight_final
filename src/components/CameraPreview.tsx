@@ -7,13 +7,15 @@ interface CameraPreviewProps {
   enabled?: boolean;
   isRecording?: boolean;
   elapsedTime?: number;
+  directoryHandle?: any | null;
 }
 export type CameraPreviewRef = {
   captureSnapshot: () => string | null;
 };
 
-export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({ enabled = true, isRecording = false, elapsedTime = 0 }: CameraPreviewProps, ref) => {
+export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({ enabled = true, isRecording = false, elapsedTime = 0, directoryHandle = null }: CameraPreviewProps, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const selectedDirHandle = (directoryHandle ?? (typeof window !== 'undefined' ? (window as any).__selectedDirectoryHandle : null)) ?? null;
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [hasCamera, setHasCamera] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -89,7 +91,7 @@ export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({
     toast.success("Switched camera");
   };
 
-  const downloadSnapshot = () => {
+  const saveOrDownloadSnapshot = () => {
     if (!videoRef.current) return;
     const canvas = document.createElement("canvas");
     canvas.width = videoRef.current.videoWidth;
@@ -99,12 +101,35 @@ export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({
       ctx.drawImage(videoRef.current, 0, 0);
       canvas.toBlob((blob) => {
         if (blob) {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `snapshot-${Date.now()}.png`;
-          a.click();
-          toast.success("Snapshot saved");
+          const fname = `pneumatic.png`;
+          const saveToFolder = async (): Promise<boolean> => {
+            const handle = selectedDirHandle;
+            if (!handle) {
+              toast.error("Select an output folder to save photos");
+              return false;
+            }
+            try {
+              if (typeof handle.requestPermission === "function") {
+                const perm = await handle.requestPermission({ mode: "readwrite" });
+                if (perm !== "granted") {
+                  toast.error("Folder permission denied — cannot save photo");
+                  return false;
+                }
+              }
+              const fileHandle = await handle.getFileHandle(fname, { create: true });
+              const writable = await fileHandle.createWritable();
+              await writable.write(blob);
+              await writable.close();
+              toast.success("Photo saved to selected folder");
+              return true;
+            } catch (e) {
+              console.error("Save photo failed", e);
+              toast.error("Failed to save photo to selected folder");
+              return false;
+            }
+          };
+
+          saveToFolder();
         }
       });
     }
@@ -190,6 +215,15 @@ export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({
             disabled={!enabled || !hasCamera}
           >
             <FlipHorizontal className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="glass-white"
+            size="icon"
+            onClick={saveOrDownloadSnapshot}
+            title="Capture Photo"
+            disabled={!enabled || !hasCamera}
+          >
+            <CameraIcon className="w-4 h-4" />
           </Button>
         </div>
       </div>
