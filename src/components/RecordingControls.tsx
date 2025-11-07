@@ -159,9 +159,10 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
               "output.mp4",
             ]);
             const readResult = await ffmpeg.readFile("output.mp4");
-            // Some typings return FileData { data: Uint8Array }, others return Uint8Array.
-            const outBytes: Uint8Array = (readResult as any)?.data ?? (readResult as Uint8Array);
-            blob = new Blob([outBytes], { type: "video/mp4" });
+            // Normalize return type and ensure Blob gets a plain ArrayBuffer (not SharedArrayBuffer)
+            const rawBytes: Uint8Array = (readResult as any)?.data ?? (readResult as Uint8Array);
+            const safeBytes = Uint8Array.from(rawBytes);
+            blob = new Blob([safeBytes.buffer], { type: "video/mp4" });
             ext = "mp4";
             fileName = `${currentCode}.mp4`;
             onLogEntry({
@@ -220,7 +221,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
             onLogEntry({
               time: new Date().toLocaleTimeString(),
               status: "success",
-              message: `Recording saved to folder: ${currentCode}.${ext}`
+              message: `Recording saved: ${fileName}`
             });
             toast.success("Recording saved to selected folder");
             return true;
