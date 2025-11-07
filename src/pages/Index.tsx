@@ -696,23 +696,23 @@ const Index = ({ onLogout }: IndexProps) => {
         </main>
       </div>
       {showQualityAlert && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-          <div className="w-11/12 max-w-md rounded-2xl bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] p-5 shadow-[var(--shadow-lg)]">
-            <div className="text-lg font-bold mb-2 text-foreground">Confirm Package</div>
-            <p className="text-sm text-muted-foreground mb-4">
-              Is the package all right or do you want to email the seller with the photos?
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75">
+          <div className="w-[95vw] sm:w-[90vw] max-w-3xl md:max-w-4xl rounded-3xl bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] p-6 md:p-8 shadow-[var(--shadow-lg)] min-h-[280px]">
+            <div className="text-lg md:text-xl font-bold mb-3 text-foreground text-center">Confirm Package</div>
+            <p className="text-sm md:text-base text-muted-foreground mb-6 text-center">
+              Is the package all right, or would you like to email the seller with the photos?
             </p>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3 justify-center">
               <Button
                 variant="glass-white"
-                className="flex-1 h-11"
+                className="flex-1 h-11 min-w-[220px] md:min-w-[260px]"
                 onClick={() => handleQualityChoice("fine")}
               >
                 {"It's Fine — Save & Download"}
               </Button>
               <Button
                 variant="glass-white"
-                className="flex-1 h-11"
+                className="flex-1 h-11 min-w-[220px] md:min-w-[260px]"
                 onClick={() => handleQualityChoice("email")}
               >
                 {"Email Seller & Download"}
