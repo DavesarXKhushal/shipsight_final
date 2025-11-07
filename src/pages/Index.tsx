@@ -661,10 +661,10 @@ const Index = ({ onLogout }: IndexProps) => {
                         const captureDisabled = !isNext || isDone;
                         const retakeDisabled = !isDone;
                         return (
-                          <div key={t} className="flex gap-2">
+                          <div key={t} className="flex gap-2 items-stretch">
                             <Button
                               variant="glass-white"
-                              className={`h-12 px-4 text-sm font-semibold shadow-lg flex-1 ${isNext ? 'ring-2 ring-primary shadow-[var(--shadow-glow)]' : ''}`}
+                              className={`h-12 w-full px-4 text-sm font-semibold shadow-lg flex-1 items-center justify-center ${isNext ? 'ring-2 ring-primary shadow-[var(--shadow-glow)]' : ''}`}
                               onClick={() => handleCapture(t)}
                               disabled={captureDisabled}
                               title={isNext ? `Capture ${t}` : isDone ? `${t} captured` : 'Wait for next step'}
@@ -673,15 +673,12 @@ const Index = ({ onLogout }: IndexProps) => {
                             </Button>
                             <Button
                               variant="glass-white"
-                              className="h-12 px-4 text-sm font-semibold shadow-lg flex-1"
+                              className="h-12 w-full px-4 text-sm font-semibold shadow-lg flex-1 items-center justify-center"
                               onClick={() => handleCapture(t, { retake: true })}
                               disabled={retakeDisabled}
                               title={`Reload ${t}`}
                             >
-                              <span className="flex items-center justify-center gap-2">
-                                <RefreshCcw className="h-4 w-4" />
-                                Reload
-                              </span>
+                              <RefreshCcw className="h-4 w-4" />
                             </Button>
                           </div>
                         );
