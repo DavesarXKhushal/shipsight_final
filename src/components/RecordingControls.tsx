@@ -141,7 +141,8 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
           });
           try {
             const ffmpegModule = await import("@ffmpeg/ffmpeg");
-            const ffmpeg = new ffmpegModule.FFmpeg({ log: false });
+            // FFmpeg constructor does not accept options in this version
+            const ffmpeg = new ffmpegModule.FFmpeg();
             await ffmpeg.load();
             const inputBuffer = new Uint8Array(await blob.arrayBuffer());
             await ffmpeg.writeFile("input.webm", inputBuffer);
@@ -157,8 +158,10 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
               "-movflags", "faststart",
               "output.mp4",
             ]);
-            const data = await ffmpeg.readFile("output.mp4");
-            blob = new Blob([data.buffer], { type: "video/mp4" });
+            const readResult = await ffmpeg.readFile("output.mp4");
+            // Some typings return FileData { data: Uint8Array }, others return Uint8Array.
+            const outBytes: Uint8Array = (readResult as any)?.data ?? (readResult as Uint8Array);
+            blob = new Blob([outBytes], { type: "video/mp4" });
             ext = "mp4";
             fileName = `${currentCode}.mp4`;
             onLogEntry({

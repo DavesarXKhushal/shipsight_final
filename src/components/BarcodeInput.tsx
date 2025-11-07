@@ -23,11 +23,10 @@ export const BarcodeInput = ({ onBarcodeChange, onSubmitBarcode, isRecording }: 
       e.preventDefault();
       const code = barcode.trim();
       if (!code) return;
-      const ok = await onSubmitBarcode(code);
-      if (ok) {
-        setBarcode("");
-        onBarcodeChange("");
-      }
+      await onSubmitBarcode(code);
+      // Always clear after submission per workflow: input should erase
+      setBarcode("");
+      onBarcodeChange("");
     }
   };
 
