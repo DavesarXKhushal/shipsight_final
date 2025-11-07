@@ -3,11 +3,12 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Analytics } from '@vercel/analytics/react';
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import { Login } from "./pages/Login";
+import Dashboard from "@/pages/Dashboard";
 
 const queryClient = new QueryClient();
 
@@ -20,6 +21,17 @@ const App = () => {
     // Always start logged out on page reload/refresh
     setIsAuthenticated(false);
     localStorage.removeItem("shipsight_auth");
+    // Clear any existing session lock and stored user on reload to avoid stale locks
+    const userRaw = localStorage.getItem("shipsight_user");
+    if (userRaw) {
+      try {
+        const user = JSON.parse(userRaw);
+        if (user?.email) {
+          localStorage.removeItem(`shipsight_lock_${user.email}`);
+        }
+      } catch {}
+      localStorage.removeItem("shipsight_user");
+    }
     setIsLoading(false);
   }, []);
 
@@ -33,6 +45,17 @@ const App = () => {
   const handleLogout = () => {
     setIsAuthenticated(false);
     localStorage.removeItem("shipsight_auth");
+    // Remove session lock for current user
+    const userRaw = localStorage.getItem("shipsight_user");
+    if (userRaw) {
+      try {
+        const user = JSON.parse(userRaw);
+        if (user?.email) {
+          localStorage.removeItem(`shipsight_lock_${user.email}`);
+        }
+      } catch {}
+      localStorage.removeItem("shipsight_user");
+    }
   };
 
   // Show loading screen while checking authentication
@@ -57,7 +80,9 @@ const App = () => {
             <Login onLogin={handleLogin} />
           ) : (
             <Routes>
-              <Route path="/" element={<Index onLogout={handleLogout} />} />
+              <Route path="/dashboard" element={<Dashboard onLogout={handleLogout} />} />
+              <Route path="/vms" element={<Index onLogout={handleLogout} />} />
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
