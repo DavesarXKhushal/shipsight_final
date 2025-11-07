@@ -93,3 +93,13 @@ All colors MUST be HSL.
     background: var(--glass-hover);
   }
 }
+
+/* Custom animations */
+@keyframes blink-recording {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
