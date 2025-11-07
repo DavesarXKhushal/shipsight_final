@@ -17,6 +17,8 @@ export interface LogEntry {
   time: string;
   status: "info" | "success" | "error";
   message: string;
+  imageUrl?: string; // optional thumbnail for snapshots
+  tag?: string; // optional label such as Front/Back/Left/Right/Top/Bottom
 }
 
 export type RecordingControlsRef = {
@@ -92,14 +94,15 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }, 
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } }, 
         audio: false 
       });
       
-      // Choose preferred mime type: try mp4, then h264 webm, then vp9, then vp8
+      // Choose preferred mime type: prioritize hardware-accelerated H.264, then VP8, then generic WebM
       const candidates = [
-        "video/mp4",
-        "video/webm;codecs=h264",
+        // Prefer MP4/H.264 for broad playback compatibility and quality (Safari supports direct MP4)
+        "video/mp4;codecs=h264",
+        // WebM variants as fallback on browsers without MP4 support (Chrome/Firefox)
         "video/webm;codecs=vp9",
         "video/webm;codecs=vp8",
         "video/webm",
@@ -111,7 +114,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
           selected = c; break;
         }
       }
-      const options: MediaRecorderOptions = selected ? { mimeType: selected, videoBitsPerSecond: 3_000_000 } : { videoBitsPerSecond: 3_000_000 };
+      const options: MediaRecorderOptions = selected ? { mimeType: selected, videoBitsPerSecond: 8_000_000 } : { videoBitsPerSecond: 8_000_000 };
       const mediaRecorder = new MediaRecorder(stream, options);
       containerRef.current = selected?.includes("mp4") ? "mp4" : "webm";
       mediaRecorderRef.current = mediaRecorder;
@@ -123,10 +126,53 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const type = selected ?? "video/webm";
-        const blob = new Blob(chunksRef.current, { type });
-        const fileName = `${currentCode}.mp4`;
+        let blob = new Blob(chunksRef.current, { type });
+        let ext = (selected && selected.includes("mp4")) ? "mp4" : "webm";
+        let fileName = `${currentCode}.${ext}`;
+
+        // If MP4 isn't supported by MediaRecorder, transcode WebM→MP4 with ffmpeg.wasm
+        if (ext === "webm") {
+          onLogEntry({
+            time: new Date().toLocaleTimeString(),
+            status: "info",
+            message: "Transcoding recording to MP4…"
+          });
+          try {
+            const ffmpegModule = await import("@ffmpeg/ffmpeg");
+            const ffmpeg = new ffmpegModule.FFmpeg({ log: false });
+            await ffmpeg.load();
+            const inputBuffer = new Uint8Array(await blob.arrayBuffer());
+            await ffmpeg.writeFile("input.webm", inputBuffer);
+            await ffmpeg.exec([
+              "-i", "input.webm",
+              "-c:v", "libx264",
+              "-preset", "veryfast",
+              "-crf", "22",
+              "-movflags", "faststart",
+              "output.mp4",
+            ]);
+            const data = await ffmpeg.readFile("output.mp4");
+            blob = new Blob([data.buffer], { type: "video/mp4" });
+            ext = "mp4";
+            fileName = `${currentCode}.mp4`;
+            onLogEntry({
+              time: new Date().toLocaleTimeString(),
+              status: "success",
+              message: "Transcoding complete: MP4 ready"
+            });
+            toast.success("MP4 created successfully");
+          } catch (e) {
+            console.error("Transcoding failed", e);
+            onLogEntry({
+              time: new Date().toLocaleTimeString(),
+              status: "error",
+              message: "Transcoding to MP4 failed; saved as WebM"
+            });
+            toast.error("Transcoding failed; saved as WebM");
+          }
+        }
 
         const saveToFolder = async () => {
           if (!directoryHandle) return false;
@@ -153,7 +199,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
           onLogEntry({
             time: new Date().toLocaleTimeString(),
             status: "success",
-            message: `Recording saved: ${currentCode}.mp4`
+            message: `Recording saved: ${currentCode}.${ext}`
           });
         });
         
@@ -227,7 +273,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         variant="glass-white"
         onClick={async () => { if (onStartBarcode) { await onStartBarcode(barcode); } else { await startRecording(); } }}
         disabled={!enabled}
-        className="flex-1 h-14 text-base font-semibold shadow-lg"
+        className="flex-1 h-11 text-sm font-semibold shadow-lg px-4"
       >
         <Circle className="w-5 h-5 mr-1 text-white" />
         Start Recording
@@ -235,10 +281,10 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
       
       {/* Timer Display - Inline with buttons */}
       {isRecording && (
-        <div className="flex items-center justify-center px-6 py-3 rounded-xl bg-gradient-to-r from-white/5 to-white/10 backdrop-blur-md border border-white/10 shadow-lg min-w-[120px]">
+        <div className="flex items-center justify-center px-4 py-2 rounded-xl bg-gradient-to-r from-white/5 to-white/10 backdrop-blur-md border border-white/10 shadow-lg min-w-[96px]">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-            <span className="text-white font-semibold text-lg tracking-wide">
+            <div className="w-2 h-2 bg-red-500 rounded-full" style={{ animation: 'blink-recording 1s infinite' }}></div>
+            <span className="text-white font-semibold text-base tracking-wide">
               {formatElapsedTime(elapsedTime)}
             </span>
           </div>
@@ -249,7 +295,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         variant="glass-white"
         onClick={() => { void stopRecording(); }}
         disabled={!isRecording || !enabled}
-        className="flex-1 h-14 text-base font-semibold shadow-lg"
+        className="flex-1 h-11 text-sm font-semibold shadow-lg px-4"
       >
         <Square className="w-5 h-5 mr-1 text-white" />
         Stop Recording
