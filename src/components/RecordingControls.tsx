@@ -98,23 +98,23 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         audio: false 
       });
       
-      // Choose preferred mime type: prioritize hardware-accelerated H.264, then VP8, then generic WebM
-      const candidates = [
-        // Prefer MP4/H.264 for broad playback compatibility and quality (Safari supports direct MP4)
-        "video/mp4;codecs=h264",
-        // WebM variants as fallback on browsers without MP4 support (Chrome/Firefox)
-        "video/webm;codecs=vp9",
-        "video/webm;codecs=vp8",
-        "video/webm",
-      ];
+      // Strict MP4-only mode: record directly to MP4, no transcoding
+      const candidate = "video/mp4;codecs=h264";
       let selected: string | undefined;
-      for (const c of candidates) {
-        // @ts-ignore
-        if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) {
-          selected = c; break;
-        }
+      // @ts-ignore
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(candidate)) {
+        selected = candidate;
       }
-      const options: MediaRecorderOptions = selected ? { mimeType: selected, videoBitsPerSecond: 8_000_000 } : { videoBitsPerSecond: 8_000_000 };
+      if (!selected) {
+        toast.error("Your browser cannot record MP4 directly. Please use Safari or a supported browser.");
+        onLogEntry({
+          time: new Date().toLocaleTimeString(),
+          status: "error",
+          message: "MP4 recording not supported by this browser"
+        });
+        return false;
+      }
+      const options: MediaRecorderOptions = { mimeType: selected, videoBitsPerSecond: 8_000_000 };
       const mediaRecorder = new MediaRecorder(stream, options);
       containerRef.current = selected?.includes("mp4") ? "mp4" : "webm";
       mediaRecorderRef.current = mediaRecorder;
@@ -127,60 +127,10 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
       };
 
       mediaRecorder.onstop = async () => {
-        const type = selected ?? "video/webm";
+        const type = selected;
         let blob = new Blob(chunksRef.current, { type });
-        let ext = (selected && selected.includes("mp4")) ? "mp4" : "webm";
-        let fileName = `${currentCode}.${ext}`;
-
-        // If MP4 isn't supported by MediaRecorder, transcode WebM→MP4 with ffmpeg.wasm
-        if (ext === "webm") {
-          onLogEntry({
-            time: new Date().toLocaleTimeString(),
-            status: "info",
-            message: "Transcoding recording to MP4…"
-          });
-          try {
-            const ffmpegModule = await import("@ffmpeg/ffmpeg");
-            // FFmpeg constructor does not accept options in this version
-            const ffmpeg = new ffmpegModule.FFmpeg();
-            await ffmpeg.load();
-            const inputBuffer = new Uint8Array(await blob.arrayBuffer());
-            await ffmpeg.writeFile("input.webm", inputBuffer);
-            await ffmpeg.exec([
-              "-i", "input.webm",
-              "-c:v", "libx264",
-              "-preset", "ultrafast",
-              "-crf", "20",
-              "-pix_fmt", "yuv420p",
-              "-r", "30",
-              "-b:v", "8000k",
-              "-an",
-              "-movflags", "faststart",
-              "output.mp4",
-            ]);
-            const readResult = await ffmpeg.readFile("output.mp4");
-            // Normalize return type and ensure Blob gets a plain ArrayBuffer (not SharedArrayBuffer)
-            const rawBytes: Uint8Array = (readResult as any)?.data ?? (readResult as Uint8Array);
-            const safeBytes = Uint8Array.from(rawBytes);
-            blob = new Blob([safeBytes.buffer], { type: "video/mp4" });
-            ext = "mp4";
-            fileName = `${currentCode}.mp4`;
-            onLogEntry({
-              time: new Date().toLocaleTimeString(),
-              status: "success",
-              message: "Transcoding complete: MP4 ready"
-            });
-            toast.success("MP4 created successfully");
-          } catch (e) {
-            console.error("Transcoding failed", e);
-            onLogEntry({
-              time: new Date().toLocaleTimeString(),
-              status: "error",
-              message: "Transcoding to MP4 failed; saved as WebM"
-            });
-            toast.error("Transcoding failed; saved as WebM");
-          }
-        }
+        const ext = "mp4";
+        const fileName = `${currentCode}.${ext}`;
 
         const downloadBlob = (b: Blob, name: string) => {
           const url = URL.createObjectURL(b);
