@@ -1,11 +1,15 @@
 import { useState, useRef, useEffect } from "react";
+import JSZip from "jszip";
+import { RefreshCcw } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { FolderOpen, LogOut } from "lucide-react";
 import logoUrl from "../../logo.png";
 import { Button } from "@/components/ui/button";
-import { CameraPreview } from "@/components/CameraPreview";
+import { CameraPreview, CameraPreviewRef } from "@/components/CameraPreview";
 import { BarcodeInput } from "@/components/BarcodeInput";
 import { RecordingControls, LogEntry, RecordingControlsRef } from "@/components/RecordingControls";
 import { SessionLog } from "@/components/SessionLog";
+import { beepStart, beepStop } from "@/lib/beep";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -34,9 +38,222 @@ const Index = ({ onLogout }: IndexProps) => {
   const [log, setLog] = useState<LogState>({ version: 1, updatedAt: new Date().toISOString(), barcodes: [], events: [] });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const controlsRef = useRef<RecordingControlsRef | null>(null);
+  const cameraRef = useRef<CameraPreviewRef | null>(null);
   const switchInProgressRef = useRef<boolean>(false);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordingStartTimeRef = useRef<Date | null>(null);
+  const navigate = useNavigate();
+  const [showReversePanel, setShowReversePanel] = useState(false);
+  const reverseOrder = ["Front", "Back", "Left", "Right", "Top", "Bottom"] as const;
+  const [reverseIndex, setReverseIndex] = useState(0);
+  const [reverseCaptured, setReverseCaptured] = useState<Record<string, boolean>>({});
+  const [reverseImages, setReverseImages] = useState<Record<string, string>>({});
+  const [showQualityAlert, setShowQualityAlert] = useState(false);
+  const [reverseZipBlob, setReverseZipBlob] = useState<Blob | null>(null);
+  const [reverseZipName, setReverseZipName] = useState<string | null>(null);
+
+  const handleCapture = async (tag: string, opts?: { retake?: boolean }) => {
+    // Enforce sequential capture order
+    const nextTag = reverseOrder[reverseIndex];
+    if (showReversePanel && !opts?.retake && tag !== nextTag) {
+      toast.error(`Please capture in order. Next: ${nextTag}`);
+      return;
+    }
+    // Prevent capturing while recording video
+    if (isRecording) {
+      toast.error("Stop recording before capturing reverse photos");
+      return;
+    }
+    const dataUrl = cameraRef.current?.captureSnapshot();
+    if (!dataUrl) {
+      toast.error("Unable to capture snapshot");
+      return;
+    }
+    // Save snapshot to folder immediately and log to session.log
+    const code = (currentRecordingBarcode || barcode || "reverse").trim() || "reverse";
+    let savedName: string | null = null;
+    try {
+      savedName = await saveSnapshotToFolder(code, tag, dataUrl);
+      if (savedName) {
+        const iso = new Date().toISOString();
+        await appendTextLog(`[${iso}] ${opts?.retake ? 'PHOTO_RETAKE' : 'PHOTO'} barcode=${code} tag=${tag} file=${savedName}`);
+      }
+    } catch (e) {
+      console.error("Failed to save snapshot", e);
+    }
+    setLogEntries(prev => [
+      ...prev,
+      {
+        time: new Date().toLocaleTimeString(),
+        status: "success",
+        message: opts?.retake ? "Retake snapshot captured" : "Snapshot captured",
+        tag,
+        imageUrl: dataUrl,
+      },
+    ]);
+    toast.success(`${opts?.retake ? 'Retake ' : ''}${tag} photo captured`);
+
+    // Store image for ZIP export
+    setReverseImages(prev => ({ ...prev, [tag]: dataUrl }));
+
+    if (showReversePanel) {
+      setReverseCaptured(prev => ({ ...prev, [tag]: true }));
+      if (!opts?.retake) {
+        setReverseIndex((i) => Math.min(i + 1, reverseOrder.length));
+      }
+      if (!opts?.retake && reverseIndex + 1 >= reverseOrder.length) {
+        await completeReverseCycle();
+      }
+    }
+  };
+
+  const saveSnapshotToFolder = async (code: string, tag: string, dataUrl: string): Promise<string | null> => {
+    try {
+      if (!dirHandle) return null;
+      const mime = dataUrl.substring(5, dataUrl.indexOf(";")); // e.g., image/jpeg or image/png
+      const ext = mime.includes("jpeg") ? "jpg" : mime.includes("png") ? "png" : "jpg";
+      const fname = `${code}_${tag}.${ext}`;
+      const fileHandle = await dirHandle.getFileHandle(fname, { create: true });
+      const writable = await fileHandle.createWritable();
+      // Convert dataUrl to Blob
+      const blob = await (await fetch(dataUrl)).blob();
+      await writable.write(blob);
+      await writable.close();
+      return fname;
+    } catch (e) {
+      console.error("Error saving snapshot", e);
+      return null;
+    }
+  };
+
+  const dataUrlToUint8 = (dataUrl: string): Uint8Array => {
+    const base64 = dataUrl.split(",")[1] || "";
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  };
+
+  const completeReverseCycle = async () => {
+    toast.success("Reverse photo capture complete");
+    try {
+      const zip = new JSZip();
+      const code = (currentRecordingBarcode || barcode || "reverse").trim() || "reverse";
+      for (const tag of reverseOrder) {
+        const img = reverseImages[tag];
+        if (img) {
+          const bytes = dataUrlToUint8(img);
+          zip.file(`${code}_${tag}.jpg`, bytes);
+        }
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      const fname = `${code}-reverse.zip`;
+      setReverseZipBlob(blob);
+      setReverseZipName(fname);
+      setLogEntries(prev => [
+        ...prev,
+        {
+          time: new Date().toLocaleTimeString(),
+          status: "success",
+          message: `Reverse photos ready: ${fname}`,
+        },
+      ]);
+      // Show quality confirmation alert
+      setShowQualityAlert(true);
+    } catch (e) {
+      console.error("ZIP generation error", e);
+      toast.error("Failed to prepare reverse photos ZIP");
+      setLogEntries(prev => [
+        ...prev,
+        {
+          time: new Date().toLocaleTimeString(),
+          status: "error",
+          message: `Failed to prepare reverse photos ZIP`,
+        },
+      ]);
+    }
+  };
+
+  const saveZipToFolder = async (blob: Blob, fname: string) => {
+    if (!dirHandle) return false;
+    try {
+      const fileHandle = await dirHandle.getFileHandle(fname, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
+    } catch (e) {
+      console.error("Save ZIP failed", e);
+      return false;
+    }
+  };
+
+  const downloadBlob = (blob: Blob, fname: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fname;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  const handleQualityChoice = async (choice: "fine" | "email") => {
+    if (!reverseZipBlob || !reverseZipName) {
+      toast.error("ZIP not ready");
+      return;
+    }
+    // Save to folder if available, and download regardless
+    const saved = await saveZipToFolder(reverseZipBlob, reverseZipName);
+    downloadBlob(reverseZipBlob, reverseZipName);
+    setLogEntries(prev => [
+      ...prev,
+      {
+        time: new Date().toLocaleTimeString(),
+        status: saved ? "success" : "info",
+        message: saved ? `ZIP saved: ${reverseZipName}` : `ZIP downloaded: ${reverseZipName}`,
+      },
+    ]);
+
+    if (choice === "email") {
+      const code = (currentRecordingBarcode || barcode || "reverse").trim() || "reverse";
+      const subject = encodeURIComponent(`Reverse photos for ${code}`);
+      const body = encodeURIComponent(`Please find the ZIP file (${reverseZipName}). If not attached automatically, it has been downloaded on your device.`);
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+      toast.message("Email compose opened");
+      setLogEntries(prev => [
+        ...prev,
+        {
+          time: new Date().toLocaleTimeString(),
+          status: "info",
+          message: `Email compose opened for ${code}`,
+        },
+      ]);
+    }
+
+    // Reset for next cycle
+    setShowQualityAlert(false);
+    setReverseIndex(0);
+    setReverseCaptured({});
+    setReverseImages({});
+    setReverseZipBlob(null);
+    setReverseZipName(null);
+  };
+
+  const toggleReversePanel = async () => {
+    const opening = !showReversePanel;
+    if (opening) {
+      // Ensure not recording when starting reverse capture flow
+      if (isRecording && controlsRef.current) {
+        await controlsRef.current.stop();
+        toast.message("Recording stopped for reverse capture");
+      }
+      // Reset flow
+      setReverseIndex(0);
+      setReverseCaptured({});
+      setReverseImages({});
+    }
+    setShowReversePanel(opening);
+  };
 
   // Timer effect to track elapsed time during recording
   useEffect(() => {
@@ -93,14 +310,48 @@ const Index = ({ onLogout }: IndexProps) => {
       const text = await file.text();
       const usedBarcodes: string[] = [];
       const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+      const historicalEntries: LogEntry[] = [];
       for (const line of lines) {
+        // Extract barcode list
         const match = line.match(/barcode=([^\s]+)/i);
         if (match && match[1]) {
           const code = match[1].trim();
           if (!usedBarcodes.includes(code)) usedBarcodes.push(code);
         }
+        // Parse known log events to display in Session Log
+        const tsMatch = line.match(/^\[(.*?)\]/);
+        const ts = tsMatch ? new Date(tsMatch[1]) : new Date();
+        const timeStr = ts.toLocaleTimeString();
+        if (/RESERVED\s+barcode=/i.test(line)) {
+          const m = line.match(/barcode=([^\s]+)/i);
+          const code = m ? m[1] : "";
+          historicalEntries.push({ time: timeStr, status: "info", message: `Reserved barcode: ${code}` });
+          continue;
+        }
+        if (/START\s+barcode=/i.test(line)) {
+          const m = line.match(/barcode=([^\s]+)/i);
+          const code = m ? m[1] : "";
+          historicalEntries.push({ time: timeStr, status: "info", message: `Started recording for barcode: ${code}` });
+          continue;
+        }
+        if (/STOP\s+barcode=/i.test(line)) {
+          const m = line.match(/barcode=([^\s]+)/i);
+          const code = m ? m[1] : "";
+          historicalEntries.push({ time: timeStr, status: "success", message: `Recording stopped for barcode: ${code}` });
+          continue;
+        }
+        if (/SAVED\s+barcode=/i.test(line)) {
+          const mFile = line.match(/file=([^\s]+)/i);
+          const fname = mFile ? mFile[1] : "file.mp4";
+          historicalEntries.push({ time: timeStr, status: "success", message: `Recording saved: ${fname}` });
+          continue;
+        }
       }
-      setLog({ version: 1, updatedAt: new Date().toISOString(), barcodes: usedBarcodes, events: [] });
+      // Load historical entries into UI
+      if (historicalEntries.length > 0) {
+        setLogEntries(prev => [...historicalEntries, ...prev]);
+      }
+      setLog({ version: 1, updatedAt: new Date().toISOString(), barcodes: usedBarcodes, events: historicalEntries });
     } catch (e) {
       console.error("Failed to load session.log", e);
       toast.error("Unable to access session log file");
@@ -247,6 +498,7 @@ const Index = ({ onLogout }: IndexProps) => {
   // Removed auto-switch on typing; recording actions now happen only on Enter or Start button
 
   return (
+    <>
     <div className="min-h-screen bg-[hsl(var(--background))] text-foreground overflow-hidden">
       {/* Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
@@ -257,7 +509,7 @@ const Index = ({ onLogout }: IndexProps) => {
       <div className="relative z-10">
         {/* Header */}
         <header className="border-b border-[var(--glass-border)] bg-[var(--glass-light)] backdrop-blur-2xl sticky top-0 z-50">
-          <div className="container mx-auto px-8 py-5">
+          <div className="container mx-auto px-6 py-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-xl bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] shadow-[var(--shadow-lg)] flex items-center justify-center">
@@ -274,6 +526,13 @@ const Index = ({ onLogout }: IndexProps) => {
               </div>
               
               <div className="flex items-center gap-3">
+                <Button
+                  variant="glass-white"
+                  className="gap-2"
+                  onClick={() => navigate("/dashboard")}
+                >
+                  <span>Dashboard</span>
+                </Button>
                 <Button
                   variant="glass-white"
                   onClick={handleFolderSelect}
@@ -302,48 +561,51 @@ const Index = ({ onLogout }: IndexProps) => {
         </header>
 
         {/* Main Content */}
-        <main className="container mx-auto px-8 py-8">
-          <div className="grid lg:grid-cols-3 gap-6">
-            {/* Left Column - Camera & Controls */}
+        <main className="container mx-auto px-6 py-6">
+          <div className="grid lg:grid-cols-3 gap-4">
+            {/* Left Column - Barcode above Camera & Controls */}
             <div className="lg:col-span-2 space-y-6">
+              {/* Barcode Input (moved above camera) with integrated recording controls */}
+              <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-5 shadow-[var(--shadow-lg)]">
+                <BarcodeInput 
+                  onBarcodeChange={setBarcode} 
+                  onSubmitBarcode={handleSubmitBarcode}
+                  isRecording={isRecording}
+                />
+                <div className="mt-4">
+                  <RecordingControls 
+                    ref={controlsRef}
+                    barcode={barcode}
+                    onRecordingStateChange={(rec) => { 
+                      setIsRecording(rec); 
+                      if (rec) {
+                        recordingStartTimeRef.current = new Date();
+                        void beepStart();
+                      } else {
+                        setCurrentRecordingBarcode("");
+                        void beepStop();
+                      }
+                    }}
+                    onLogEntry={handleLogEntry}
+                    enabled={Boolean(outputFolder)}
+                    onReserveBarcode={reserveBarcode}
+                    onStartBarcode={handleSubmitBarcode}
+                    directoryHandle={dirHandle}
+                  />
+                </div>
+              </div>
+
               {/* Camera Preview */}
-              <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-lg)] hover:shadow-[var(--shadow-glow)] transition-all duration-300">
+              <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-5 shadow-[var(--shadow-lg)] hover:shadow-[var(--shadow-glow)] transition-all duration-300 h-[calc(100vh-8rem)]">
                 <CameraPreview 
+                  ref={cameraRef}
                   enabled={Boolean(outputFolder)} 
                   isRecording={isRecording}
                   elapsedTime={elapsedTime}
                 />
               </div>
 
-              {/* Barcode Input */}
-              <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-lg)]">
-                <BarcodeInput 
-                  onBarcodeChange={setBarcode} 
-                  onSubmitBarcode={handleSubmitBarcode}
-                  isRecording={isRecording}
-                />
-              </div>
-
-              {/* Recording Controls */}
-              <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-lg)]">
-                <RecordingControls 
-                  ref={controlsRef}
-                  barcode={barcode}
-                  onRecordingStateChange={(rec) => { 
-                    setIsRecording(rec); 
-                    if (rec) {
-                      recordingStartTimeRef.current = new Date();
-                    } else {
-                      setCurrentRecordingBarcode("");
-                    }
-                  }}
-                  onLogEntry={handleLogEntry}
-                  enabled={Boolean(outputFolder)}
-                  onReserveBarcode={reserveBarcode}
-                  onStartBarcode={handleSubmitBarcode}
-                  directoryHandle={dirHandle}
-                />
-              </div>
+              {/* Recording Controls moved under Barcode Input */}
 
               {!outputFolder && (
                 <AlertDialog defaultOpen>
@@ -371,14 +633,96 @@ const Index = ({ onLogout }: IndexProps) => {
 
             {/* Right Column - Session Log */}
             <div className="lg:col-span-1">
-              <div className="sticky top-24 h-[calc(100vh-10rem)]">
+              <div className="sticky top-20 h-[calc(100vh-8rem)]">
+                <div className="mb-4">
+                  <Button 
+                    variant="glass-white" 
+                    className="w-full h-11 px-4 text-sm font-semibold shadow-lg"
+                    onClick={toggleReversePanel}
+                  >
+                    {showReversePanel ? "Hide Reverse Photos" : "Capture Reverse Photos"}
+                  </Button>
+                </div>
+                {showReversePanel && (
+                  <div className="bg-[var(--glass-medium)] backdrop-blur-md border border-[var(--glass-border)] rounded-3xl p-4 shadow-[var(--shadow-lg)] mb-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold">Capture Reverse Photos</h3>
+                      <span className="text-xs text-muted-foreground">Front, Back, Left, Right, Top, Bottom</span>
+                    </div>
+                    <div className="mb-3">
+                      <span className="px-3 py-1 rounded-xl bg-red-500/15 text-red-400 border border-red-400/30 text-xs font-semibold">
+                        Reverse Packing
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {reverseOrder.map((t, idx) => {
+                        const isNext = idx === reverseIndex;
+                        const isDone = Boolean(reverseCaptured[t]);
+                        const captureDisabled = !isNext || isDone;
+                        const retakeDisabled = !isDone;
+                        return (
+                          <div key={t} className="flex gap-2">
+                            <Button
+                              variant="glass-white"
+                              className={`h-12 px-4 text-sm font-semibold shadow-lg flex-1 ${isNext ? 'ring-2 ring-primary shadow-[var(--shadow-glow)]' : ''}`}
+                              onClick={() => handleCapture(t)}
+                              disabled={captureDisabled}
+                              title={isNext ? `Capture ${t}` : isDone ? `${t} captured` : 'Wait for next step'}
+                            >
+                              {t}
+                            </Button>
+                            <Button
+                              variant="glass-white"
+                              className="h-12 px-4 text-sm font-semibold shadow-lg flex-1"
+                              onClick={() => handleCapture(t, { retake: true })}
+                              disabled={retakeDisabled}
+                              title={`Reload ${t}`}
+                            >
+                              <span className="flex items-center justify-center gap-2">
+                                <RefreshCcw className="h-4 w-4" />
+                                Reload
+                              </span>
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <SessionLog entries={logEntries} onDownloadLog={downloadLogFile} />
               </div>
             </div>
           </div>
         </main>
       </div>
+      {showQualityAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="w-11/12 max-w-md rounded-2xl bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] p-5 shadow-[var(--shadow-lg)]">
+            <div className="text-lg font-bold mb-2 text-foreground">Confirm Package</div>
+            <p className="text-sm text-muted-foreground mb-4">
+              Is the package all right or do you want to email the seller with the photos?
+            </p>
+            <div className="flex gap-3">
+              <Button
+                variant="glass-white"
+                className="flex-1 h-11"
+                onClick={() => handleQualityChoice("fine")}
+              >
+                {"It's Fine — Save & Download"}
+              </Button>
+              <Button
+                variant="glass-white"
+                className="flex-1 h-11"
+                onClick={() => handleQualityChoice("email")}
+              >
+                {"Email Seller & Download"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+    </>
   );
 };
 
