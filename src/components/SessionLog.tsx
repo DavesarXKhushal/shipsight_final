@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { FileText, Info, CheckCircle2, AlertCircle } from "lucide-react";
 import { LogEntry } from "./RecordingControls";
 
@@ -7,6 +8,7 @@ interface SessionLogProps {
 }
 
 export const SessionLog = ({ entries, onDownloadLog }: SessionLogProps) => {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const getStatusIcon = (status: LogEntry["status"]) => {
     switch (status) {
       case "success":
@@ -17,6 +19,14 @@ export const SessionLog = ({ entries, onDownloadLog }: SessionLogProps) => {
         return <Info className="w-4 h-4 text-blue-400" />;
     }
   };
+
+  // Auto-scroll to the latest entry when entries update
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+  }, [entries]);
 
   return (
     <div className="h-full flex flex-col bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-6 shadow-[var(--shadow-lg)]">
@@ -37,7 +47,7 @@ export const SessionLog = ({ entries, onDownloadLog }: SessionLogProps) => {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-2.5 pr-2 custom-scrollbar">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-2.5 pr-2 custom-scrollbar">
         {entries.length === 0 ? (
           <div className="text-center py-16">
             <div className="p-4 rounded-2xl bg-[var(--glass-medium)] border border-[var(--glass-border)] inline-block mb-4">
@@ -76,7 +86,17 @@ export const SessionLog = ({ entries, onDownloadLog }: SessionLogProps) => {
                 </div>
                 <p className="text-sm text-foreground/85 break-words leading-relaxed">
                   {entry.message}
+                  {entry.tag ? ` — ${entry.tag}` : ""}
                 </p>
+                {entry.imageUrl && (
+                  <div className="mt-2">
+                    <img
+                      src={entry.imageUrl}
+                      alt={entry.tag || "Snapshot"}
+                      className="h-20 w-auto rounded-xl border border-[var(--glass-border)] shadow-sm"
+                    />
+                  </div>
+                )}
               </div>
             </div>
           ))
