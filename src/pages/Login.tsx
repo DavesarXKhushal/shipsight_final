@@ -57,6 +57,21 @@ export const Login = ({ onLogin }: LoginProps) => {
     );
 
     if (user) {
+      // Enforce single-device login (local session lock)
+      const lockKey = `shipsight_lock_${user.email}`;
+      const existingLock = localStorage.getItem(lockKey);
+      if (existingLock) {
+        toast.error("This account is already logged in on another device.");
+        onLogin(false);
+        setIsLoading(false);
+        return;
+      }
+
+      // Create session lock and store current user metadata
+      const sessionId = (crypto as any)?.randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random()}`;
+      localStorage.setItem(lockKey, JSON.stringify({ sessionId, startedAt: Date.now() }));
+      localStorage.setItem("shipsight_user", JSON.stringify({ email: user.email, username: user.username, displayName: user.displayName }));
+
       toast.success(`Welcome to ShipSight, ${user.displayName}!`);
       onLogin(true);
     } else {
