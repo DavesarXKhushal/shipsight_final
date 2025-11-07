@@ -502,7 +502,7 @@ const Index = ({ onLogout }: IndexProps) => {
     }
     if (entry.message.startsWith("Recording saved:")) {
       const fname = entry.message.replace("Recording saved:", "").trim();
-      const bc = fname.replace(/\.mp4$/i, "").trim();
+      const bc = fname.replace(/\.(mp4|webm)$/i, "").trim();
       appendTextLog(`[${iso}] SAVED barcode=${bc} file=${fname}`).catch(() => {});
       return;
     }
