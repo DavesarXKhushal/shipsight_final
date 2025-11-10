@@ -39,6 +39,12 @@ export const Login = ({ onLogin }: LoginProps) => {
       email: "admin@shipsight.com",
       password: "AdminShip2025!",
       displayName: "Administrator"
+    },
+    {
+      username: "rohit",
+      email: "rohit@shipsight.com",
+      password: "RohitShip2025!",
+      displayName: "Rohit"
     }
   ];
 
