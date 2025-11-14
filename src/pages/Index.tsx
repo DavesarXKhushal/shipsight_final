@@ -51,6 +51,73 @@ const Index = ({ onLogout }: IndexProps) => {
   const [showQualityAlert, setShowQualityAlert] = useState(false);
   const [reverseZipBlob, setReverseZipBlob] = useState<Blob | null>(null);
   const [reverseZipName, setReverseZipName] = useState<string | null>(null);
+  const [recordMode, setRecordMode] = useState<"forward" | "reverse">("forward");
+  const [folderInitDone, setFolderInitDone] = useState(false);
+
+  const idbOpen = (): Promise<IDBDatabase> => {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open("shipsight-store", 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains("handles")) db.createObjectStore("handles");
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  };
+
+  const saveDirHandleIDB = async (handle: any) => {
+    try {
+      const db = await idbOpen();
+      const tx = db.transaction("handles", "readwrite");
+      tx.objectStore("handles").put(handle, "outputDir");
+      await new Promise((res, rej) => { tx.oncomplete = () => res(null); tx.onerror = () => rej(tx.error); });
+      db.close();
+    } catch {}
+  };
+
+  const loadDirHandleIDB = async (): Promise<any | null> => {
+    try {
+      const db = await idbOpen();
+      const tx = db.transaction("handles", "readonly");
+      const req = tx.objectStore("handles").get("outputDir");
+      const handle: any = await new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
+      db.close();
+      return handle ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    const restore = async () => {
+      try {
+        const h = await loadDirHandleIDB();
+        if (!h) { setFolderInitDone(true); return; }
+        if (typeof h.requestPermission === "function") {
+          const perm = await h.requestPermission({ mode: "readwrite" });
+          if (perm !== "granted") { setFolderInitDone(true); return; }
+        }
+        setDirHandle(h);
+        setOutputFolder(h.name);
+        try {
+          localStorage.setItem('shipsight:lastOutputFolderName', h.name);
+          document.cookie = `shipsight_last_folder=${encodeURIComponent(h.name)}; path=/; max-age=31536000`;
+        } catch {}
+        try {
+          await h.getDirectoryHandle("forward", { create: true });
+          await h.getDirectoryHandle("reverse", { create: true });
+        } catch {}
+        await loadTextLog(h);
+        const iso = new Date().toISOString();
+        await appendTextLog(`[${iso}] RESTORE folder=${h.name}`, h);
+        setLogEntries(prev => [...prev, { time: new Date().toLocaleTimeString(), status: "info", message: `Output folder restored: ${h.name}` }]);
+      } finally {
+        setFolderInitDone(true);
+      }
+    };
+    restore();
+  }, []);
 
   const handleCapture = async (tag: string, opts?: { retake?: boolean }) => {
     // Enforce sequential capture order
@@ -69,28 +136,22 @@ const Index = ({ onLogout }: IndexProps) => {
       toast.error("Select output folder before capturing photos");
       return;
     }
-    // Prevent capturing while recording video
-    if (isRecording) {
-      toast.error("Stop recording before capturing reverse photos");
-      return;
+    if (!isRecording) {
+      const started = await handleSubmitBarcode(barcode.trim());
+      if (!started) {
+        return;
+      }
     }
     const dataUrl = cameraRef.current?.captureSnapshot();
     if (!dataUrl) {
       toast.error("Unable to capture snapshot");
       return;
     }
-    // Save snapshot to folder immediately and log to session.log
     const code = barcode.trim();
-    let savedName: string | null = null;
     try {
-      savedName = await saveSnapshotToFolder(code, tag, dataUrl);
-      if (savedName) {
-        const iso = new Date().toISOString();
-        await appendTextLog(`[${iso}] ${opts?.retake ? 'PHOTO_RETAKE' : 'PHOTO'} barcode=${code} tag=${tag} file=${savedName}`);
-      }
-    } catch (e) {
-      console.error("Failed to save snapshot", e);
-    }
+      const iso = new Date().toISOString();
+      await appendTextLog(`[${iso}] ${opts?.retake ? 'PHOTO_RETAKE' : 'PHOTO'} barcode=${code} tag=${tag}`);
+    } catch { void 0; }
     setLogEntries(prev => [
       ...prev,
       {
@@ -146,6 +207,9 @@ const Index = ({ onLogout }: IndexProps) => {
 
   const completeReverseCycle = async () => {
     toast.success("Reverse photo capture complete");
+    if (isRecording && controlsRef.current) {
+      await controlsRef.current.stop();
+    }
     try {
       const zip = new JSZip();
       const code = barcode.trim();
@@ -187,7 +251,8 @@ const Index = ({ onLogout }: IndexProps) => {
   const saveZipToFolder = async (blob: Blob, fname: string) => {
     if (!dirHandle) return false;
     try {
-      const fileHandle = await dirHandle.getFileHandle(fname, { create: true });
+      const reverseDir = await dirHandle.getDirectoryHandle("reverse", { create: true });
+      const fileHandle = await reverseDir.getFileHandle(fname, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(blob);
       await writable.close();
@@ -226,6 +291,13 @@ const Index = ({ onLogout }: IndexProps) => {
         message: saved ? `ZIP saved: ${reverseZipName}` : `Failed to save ZIP`,
       },
     ]);
+    try {
+      const iso = new Date().toISOString();
+      const code = barcode.trim();
+      if (saved) {
+        await appendTextLog(`[${iso}] ZIP_SAVED barcode=${code} file=${reverseZipName} folder=reverse`);
+      }
+    } catch { void 0; }
 
     if (choice === "email") {
       const code = barcode.trim();
@@ -254,18 +326,20 @@ const Index = ({ onLogout }: IndexProps) => {
 
   const toggleReversePanel = async () => {
     const opening = !showReversePanel;
+    if (opening && isRecording && recordMode === "forward") {
+      toast.error("Reverse capture disabled during forward recording");
+      return;
+    }
     if (opening) {
-      // Ensure not recording when starting reverse capture flow
-      if (isRecording && controlsRef.current) {
-        await controlsRef.current.stop();
-        toast.message("Recording stopped for reverse capture");
-      }
-      // Reset flow
       setReverseIndex(0);
       setReverseCaptured({});
       setReverseImages({});
+      setRecordMode("reverse");
     }
     setShowReversePanel(opening);
+    if (!opening) {
+      setRecordMode("forward");
+    }
   };
 
   // Timer effect to track elapsed time during recording
@@ -300,6 +374,18 @@ const Index = ({ onLogout }: IndexProps) => {
       const directoryHandle = await window.showDirectoryPicker();
       setDirHandle(directoryHandle);
       setOutputFolder(directoryHandle.name);
+      try {
+        localStorage.setItem('shipsight:lastOutputFolderName', directoryHandle.name);
+        document.cookie = `shipsight_last_folder=${encodeURIComponent(directoryHandle.name)}; path=/; max-age=31536000`;
+      } catch {}
+      await saveDirHandleIDB(directoryHandle);
+      try {
+        await directoryHandle.getDirectoryHandle("forward", { create: true });
+        await directoryHandle.getDirectoryHandle("reverse", { create: true });
+        const iso = new Date().toISOString();
+        await appendTextLog(`[${iso}] INIT folder=forward`, directoryHandle);
+        await appendTextLog(`[${iso}] INIT folder=reverse`, directoryHandle);
+      } catch { void 0; }
 
       // Load or initialize session.log inside selected folder
       await loadTextLog(directoryHandle);
@@ -387,19 +473,38 @@ const Index = ({ onLogout }: IndexProps) => {
     }
   };
 
-  const reserveBarcode = async (code: string): Promise<boolean> => {
+  const reserveBarcode = async (code: string, mode: "forward" | "reverse"): Promise<boolean> => {
     const normalized = code.trim();
     if (!normalized) {
       toast.error("Barcode is empty");
       return false;
     }
-    if (log.barcodes.includes(normalized)) {
-      toast.error("Barcode already used. Please enter a unique barcode.");
+    let usedForward = false;
+    let usedReverse = false;
+    try {
+      if (dirHandle) {
+        const fh = await dirHandle.getFileHandle("session.log", { create: true });
+        const f = await fh.getFile();
+        const text = await f.text();
+        const fwdStart = new RegExp(`\\bSTART\\b[^\n]*barcode=${normalized}[^\n]*folder=forward`, "i");
+        const fwdSaved = new RegExp(`\\bSAVED\\b[^\n]*barcode=${normalized}[^\n]*folder=forward`, "i");
+        const revStart = new RegExp(`\\bSTART\\b[^\n]*barcode=${normalized}[^\n]*folder=reverse`, "i");
+        const revSaved = new RegExp(`\\bSAVED\\b[^\n]*barcode=${normalized}[^\n]*folder=reverse`, "i");
+        usedForward = fwdStart.test(text) || fwdSaved.test(text);
+        usedReverse = revStart.test(text) || revSaved.test(text);
+      }
+    } catch { }
+    if (mode === "forward" && usedForward) {
+      toast.error("Barcode already used for forward recording");
+      return false;
+    }
+    if (mode === "reverse" && usedReverse) {
+      toast.error("Barcode already used for reverse recording");
       return false;
     }
     const updated: LogState = { version: 1, updatedAt: new Date().toISOString(), barcodes: [...log.barcodes, normalized], events: log.events };
     setLog(updated);
-    await appendTextLog(`[${new Date().toISOString()}] RESERVED barcode=${normalized}`);
+    await appendTextLog(`[${new Date().toISOString()}] RESERVED barcode=${normalized} folder=${mode}`);
     setLogEntries(prev => [...prev, {
       time: new Date().toLocaleTimeString(),
       status: "info",
@@ -425,8 +530,7 @@ const Index = ({ onLogout }: IndexProps) => {
     }
 
     if (isRecording) {
-      // When switching to a different barcode, reserve first; only stop if reserve succeeds
-      const ok = await reserveBarcode(normalized);
+      const ok = await reserveBarcode(normalized, recordMode);
       if (!ok) {
         // Keep current recording running on duplicate or invalid
         return false;
@@ -440,8 +544,42 @@ const Index = ({ onLogout }: IndexProps) => {
       return false;
     }
 
-    // Not currently recording: reserve then start
-    const ok = await reserveBarcode(normalized);
+    const ok = await reserveBarcode(normalized, recordMode);
+    if (!ok) return false;
+    if (controlsRef.current) {
+      const started = await controlsRef.current.startWithBarcode(normalized);
+      if (started) setCurrentRecordingBarcode(normalized);
+      return started;
+    }
+    return false;
+  };
+
+  const handleSubmitForwardBarcode = async (code: string): Promise<boolean> => {
+    const normalized = code.trim();
+    if (!normalized) return false;
+    if (showReversePanel) setShowReversePanel(false);
+    setRecordMode("forward");
+    if (isRecording && controlsRef.current && normalized === currentRecordingBarcode && normalized.length > 0) {
+      await controlsRef.current.stop();
+      toast.error("Same barcode entered; recording stopped.");
+      return false;
+    }
+    if (!outputFolder) {
+      toast.error("Please select an output folder first");
+      return false;
+    }
+    if (isRecording) {
+      const ok = await reserveBarcode(normalized, "forward");
+      if (!ok) return false;
+      if (controlsRef.current) {
+        await controlsRef.current.stop();
+        const started = await controlsRef.current.startWithBarcode(normalized);
+        if (started) setCurrentRecordingBarcode(normalized);
+        return started;
+      }
+      return false;
+    }
+    const ok = await reserveBarcode(normalized, "forward");
     if (!ok) return false;
     if (controlsRef.current) {
       const started = await controlsRef.current.startWithBarcode(normalized);
@@ -489,21 +627,21 @@ const Index = ({ onLogout }: IndexProps) => {
       const m = entry.message.match(/Started recording for barcode:\s*(\S+)/i);
       if (m) {
         setCurrentRecordingBarcode(m[1]);
-        appendTextLog(`[${iso}] START barcode=${m[1]}`).catch(() => {});
+        appendTextLog(`[${iso}] START barcode=${m[1]} folder=${recordMode}`).catch(() => {});
       }
       return;
     }
     if (/Recording stopped for barcode:/i.test(entry.message)) {
       const m = entry.message.match(/Recording stopped for barcode:\s*(\S+)/i);
       if (m) {
-        appendTextLog(`[${iso}] STOP barcode=${m[1]}`).catch(() => {});
+        appendTextLog(`[${iso}] STOP barcode=${m[1]} folder=${recordMode}`).catch(() => {});
       }
       return;
     }
     if (entry.message.startsWith("Recording saved:")) {
       const fname = entry.message.replace("Recording saved:", "").trim();
       const bc = fname.replace(/\.(mp4|webm)$/i, "").trim();
-      appendTextLog(`[${iso}] SAVED barcode=${bc} file=${fname}`).catch(() => {});
+      appendTextLog(`[${iso}] SAVED barcode=${bc} file=${fname} folder=${recordMode}`).catch(() => {});
       return;
     }
   };
@@ -525,7 +663,14 @@ const Index = ({ onLogout }: IndexProps) => {
           <div className="container mx-auto px-6 py-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] shadow-[var(--shadow-lg)] flex items-center justify-center">
+                <div
+                  className="w-12 h-12 rounded-xl bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] shadow-[var(--shadow-lg)] flex items-center justify-center cursor-pointer"
+                  onClick={() => navigate("/dashboard")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") navigate("/dashboard"); }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Go to Dashboard"
+                >
                   <img src={logoUrl} alt="ShipSight Logo" className="w-8 h-8 object-contain" />
                 </div>
                 <div>
@@ -582,7 +727,7 @@ const Index = ({ onLogout }: IndexProps) => {
               <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-5 shadow-[var(--shadow-lg)]">
                 <BarcodeInput 
                   onBarcodeChange={setBarcode} 
-                  onSubmitBarcode={handleSubmitBarcode}
+                  onSubmitBarcode={handleSubmitForwardBarcode}
                   isRecording={isRecording}
                 />
                 <div className="mt-4">
@@ -594,6 +739,9 @@ const Index = ({ onLogout }: IndexProps) => {
                       if (rec) {
                         recordingStartTimeRef.current = new Date();
                         void beepStart();
+                        if (recordMode === "forward" && showReversePanel) {
+                          setShowReversePanel(false);
+                        }
                       } else {
                         setCurrentRecordingBarcode("");
                         void beepStop();
@@ -601,9 +749,10 @@ const Index = ({ onLogout }: IndexProps) => {
                     }}
                     onLogEntry={handleLogEntry}
                     enabled={Boolean(outputFolder)}
-                    onReserveBarcode={reserveBarcode}
-                    onStartBarcode={handleSubmitBarcode}
+                    onReserveBarcode={(code) => reserveBarcode(code, recordMode)}
+                    onStartBarcode={handleSubmitForwardBarcode}
                     directoryHandle={dirHandle}
+                    subfolder={recordMode}
                   />
                 </div>
               </div>
@@ -615,12 +764,14 @@ const Index = ({ onLogout }: IndexProps) => {
                   enabled={Boolean(outputFolder)} 
                   isRecording={isRecording}
                   elapsedTime={elapsedTime}
+                  recordMode={recordMode}
+                  overlayText={currentRecordingBarcode}
                 />
               </div>
 
               {/* Recording Controls moved under Barcode Input */}
 
-              {!outputFolder && (
+              {folderInitDone && !outputFolder && (
                 <AlertDialog defaultOpen>
                   <AlertDialogContent className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)]">
                     <AlertDialogHeader>
@@ -652,6 +803,7 @@ const Index = ({ onLogout }: IndexProps) => {
                     variant="glass-white" 
                     className="w-full h-11 px-4 text-sm font-semibold shadow-lg"
                     onClick={toggleReversePanel}
+                    disabled={isRecording && recordMode === "forward"}
                   >
                     {showReversePanel ? "Hide Reverse Photos" : "Capture Reverse Photos"}
                   </Button>
@@ -671,8 +823,8 @@ const Index = ({ onLogout }: IndexProps) => {
                       {reverseOrder.map((t, idx) => {
                         const isNext = idx === reverseIndex;
                         const isDone = Boolean(reverseCaptured[t]);
-                        const captureDisabled = !isNext || isDone;
-                        const retakeDisabled = !isDone;
+                        const captureDisabled = (!isNext || isDone) || (isRecording && recordMode === "forward");
+                        const retakeDisabled = (!isDone) || (isRecording && recordMode === "forward");
                         return (
                           <div key={t} className="flex gap-2 items-center">
                             <Button

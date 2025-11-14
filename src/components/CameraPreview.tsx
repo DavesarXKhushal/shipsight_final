@@ -8,12 +8,14 @@ interface CameraPreviewProps {
   isRecording?: boolean;
   elapsedTime?: number;
   directoryHandle?: any | null;
+  recordMode?: "forward" | "reverse";
+  overlayText?: string;
 }
 export type CameraPreviewRef = {
   captureSnapshot: () => string | null;
 };
 
-export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({ enabled = true, isRecording = false, elapsedTime = 0, directoryHandle = null }: CameraPreviewProps, ref) => {
+export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({ enabled = true, isRecording = false, elapsedTime = 0, directoryHandle = null, recordMode = "forward", overlayText }: CameraPreviewProps, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const selectedDirHandle = (directoryHandle ?? (typeof window !== 'undefined' ? (window as any).__selectedDirectoryHandle : null)) ?? null;
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -101,22 +103,21 @@ export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({
       ctx.drawImage(videoRef.current, 0, 0);
       canvas.toBlob((blob) => {
         if (blob) {
-          const fname = `pneumatic.png`;
+          const fname = `snapshot-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
           const saveToFolder = async (): Promise<boolean> => {
-            const handle = selectedDirHandle;
-            if (!handle) {
+            if (!selectedDirHandle) {
               toast.error("Select an output folder to save photos");
               return false;
             }
             try {
-              if (typeof handle.requestPermission === "function") {
-                const perm = await handle.requestPermission({ mode: "readwrite" });
+              if (typeof selectedDirHandle.requestPermission === "function") {
+                const perm = await selectedDirHandle.requestPermission({ mode: "readwrite" });
                 if (perm !== "granted") {
                   toast.error("Folder permission denied — cannot save photo");
                   return false;
                 }
               }
-              const fileHandle = await handle.getFileHandle(fname, { create: true });
+              const fileHandle = await selectedDirHandle.getFileHandle(fname, { create: true });
               const writable = await fileHandle.createWritable();
               await writable.write(blob);
               await writable.close();
@@ -129,7 +130,19 @@ export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({
             }
           };
 
-          saveToFolder();
+          saveToFolder().then((ok) => {
+            if (!ok) {
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = fname;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 2000);
+              toast.message("Photo downloaded to your default folder");
+            }
+          });
         }
       });
     }
@@ -221,7 +234,7 @@ export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({
             size="icon"
             onClick={saveOrDownloadSnapshot}
             title="Capture Photo"
-            disabled={!enabled || !hasCamera}
+            disabled={!enabled || !hasCamera || (recordMode === "forward" && isRecording)}
           >
             <CameraIcon className="w-4 h-4" />
           </Button>
@@ -238,13 +251,18 @@ export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({
               muted
               className={"w-full h-full object-cover " + (isFlipped ? "scale-x-[-1]" : "")}
             />
-            {/* Timer Overlay */}
             {isRecording && (
               <div className="absolute top-4 left-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-black/40 to-black/60 backdrop-blur-md border border-white/10 shadow-lg">
                 <div className="w-2 h-2 bg-red-500 rounded-full" style={{ animation: 'blink-recording 1s infinite' }}></div>
                 <span className="text-white font-semibold text-sm tracking-wide">
                   REC {formatElapsedTime(elapsedTime)}
                 </span>
+              </div>
+            )}
+            {isRecording && overlayText && (
+              <div className="absolute top-4 right-4 px-4 py-2 rounded-xl bg-gradient-to-r from-black/40 to-black/60 backdrop-blur-md border border-white/10 shadow-lg text-right">
+                <div className="text-white text-xs font-medium leading-tight">{new Date().toLocaleString()}</div>
+                <div className="text-white text-sm font-semibold tracking-wide">{overlayText}</div>
               </div>
             )}
           </>

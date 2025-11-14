@@ -11,6 +11,7 @@ interface RecordingControlsProps {
   onReserveBarcode?: (code: string) => Promise<boolean>;
   directoryHandle?: any | null;
   onStartBarcode?: (code: string) => Promise<boolean>;
+  subfolder?: "forward" | "reverse";
 }
 
 export interface LogEntry {
@@ -34,6 +35,7 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
   onReserveBarcode,
   directoryHandle,
   onStartBarcode,
+  subfolder,
 }: RecordingControlsProps, ref) => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStartTime, setRecordingStartTime] = useState<Date | null>(null);
@@ -43,6 +45,9 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
   const containerRef = useRef<string>("webm");
   const stopResolveRef = useRef<(() => void) | null>(null);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const overlayRAFRef = useRef<number | null>(null);
+  const userStreamRef = useRef<MediaStream | null>(null);
+  const canvasStreamRef = useRef<MediaStream | null>(null);
 
   // Timer effect to update elapsed time every second
   useEffect(() => {
@@ -93,10 +98,20 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } }, 
+      if (directoryHandle) {
+        try {
+          if (typeof directoryHandle.requestPermission === "function") {
+            await directoryHandle.requestPermission({ mode: "readwrite" });
+          }
+          await directoryHandle.getDirectoryHandle("forward", { create: true });
+          await directoryHandle.getDirectoryHandle("reverse", { create: true });
+        } catch {}
+      }
+      const userStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 60 } }, 
         audio: false 
       });
+      userStreamRef.current = userStream;
       
       // Prefer MP4 when available, otherwise fall back to WebM (no audio)
       const candidates = [
@@ -122,7 +137,85 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         });
         return false;
       }
-      const options: MediaRecorderOptions = { mimeType: selected, videoBitsPerSecond: 8_000_000 };
+      const isMp4 = selected?.includes("mp4");
+      const vbr = isMp4 ? 20_000_000 : 12_000_000;
+      const options: MediaRecorderOptions = { mimeType: selected, videoBitsPerSecond: vbr };
+      const videoEl = document.createElement("video");
+      videoEl.srcObject = userStream;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      await videoEl.play();
+      const track = userStream.getVideoTracks()[0];
+      try {
+        const caps: any = typeof track.getCapabilities === "function" ? track.getCapabilities() : {};
+        let targetWidth = 1920;
+        let targetHeight = 1080;
+        let targetFps = 30;
+        if (caps?.width?.max && caps?.height?.max) {
+          if (caps.width.max >= 1920 && caps.height.max >= 1080) {
+            targetWidth = 1920;
+            targetHeight = 1080;
+          } else {
+            targetWidth = caps.width.max;
+            targetHeight = caps.height.max;
+          }
+        }
+        if (caps?.frameRate?.max) {
+          targetFps = Math.max(30, Math.min(60, caps.frameRate.max));
+        }
+        await track.applyConstraints({ width: targetWidth, height: targetHeight, frameRate: targetFps });
+      } catch {}
+      const settings = typeof track.getSettings === "function" ? track.getSettings() : {} as any;
+      const w = ((settings.width as number) ?? videoEl.videoWidth) || 1920;
+      const h = ((settings.height as number) ?? videoEl.videoHeight) || 1080;
+      const fps = (settings.frameRate as number) ?? 30;
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      // @ts-ignore
+      ctx.imageSmoothingEnabled = false;
+      const draw = () => {
+        ctx.drawImage(videoEl, 0, 0, w, h);
+        const codeText = currentCode;
+        const timeText = new Date().toLocaleString();
+        const padX = Math.round(w * 0.016);
+        const padY = Math.round(h * 0.012);
+        const fCode = Math.round(h * 0.028);
+        const fTime = Math.round(h * 0.022);
+        ctx.textBaseline = "top";
+        ctx.font = `${fCode}px system-ui, -apple-system, Segoe UI, Roboto`;
+        const codeW = ctx.measureText(codeText).width;
+        ctx.font = `${fTime}px system-ui, -apple-system, Segoe UI, Roboto`;
+        const timeW = ctx.measureText(timeText).width;
+        const boxW = Math.max(codeW, timeW) + padX * 2;
+        const boxH = fCode + fTime + padY * 3;
+        const x = w - boxW - padX;
+        const y = padY;
+        const r = Math.round(Math.min(boxW, boxH) * 0.12);
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + boxW - r, y);
+        ctx.quadraticCurveTo(x + boxW, y, x + boxW, y + r);
+        ctx.lineTo(x + boxW, y + boxH - r);
+        ctx.quadraticCurveTo(x + boxW, y + boxH, x + boxW - r, y + boxH);
+        ctx.lineTo(x + r, y + boxH);
+        ctx.quadraticCurveTo(x, y + boxH, x, y + boxH - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `${fTime}px system-ui, -apple-system, Segoe UI, Roboto`;
+        ctx.fillText(timeText, x + padX, y + padY);
+        ctx.font = `${fCode}px system-ui, -apple-system, Segoe UI, Roboto`;
+        ctx.fillText(codeText, x + padX, y + padY * 2 + fTime);
+        overlayRAFRef.current = requestAnimationFrame(draw);
+      };
+      draw();
+      const stream = canvas.captureStream(Math.min(Math.max(24, fps), 60));
+      canvasStreamRef.current = stream;
       const mediaRecorder = new MediaRecorder(stream, options);
       containerRef.current = selected?.includes("mp4") ? "mp4" : "webm";
       mediaRecorderRef.current = mediaRecorder;
@@ -162,7 +255,29 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
           setTimeout(() => URL.revokeObjectURL(url), 2000);
         };
 
-        // Try saving to the selected folder first; fall back to browser download
+        let targetDir = directoryHandle;
+        if (subfolder) {
+          try {
+            targetDir = await directoryHandle.getDirectoryHandle(subfolder, { create: true });
+          } catch (e) {
+            targetDir = directoryHandle;
+          }
+        }
+        let finalName = fileName;
+        try {
+          await targetDir.getFileHandle(finalName, { create: false });
+          let i = 1;
+          while (true) {
+            finalName = `${currentCode}_${i}.${ext}`;
+            try {
+              await targetDir.getFileHandle(finalName, { create: false });
+              i++;
+            } catch {
+              break;
+            }
+          }
+        } catch {}
+
         const saveToFolder = async (): Promise<boolean> => {
           if (!directoryHandle) {
             toast.error("Select an output folder to save recordings");
@@ -186,14 +301,14 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
                 return false;
               }
             }
-            const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
+            const fileHandle = await targetDir.getFileHandle(finalName, { create: true });
             const writable = await fileHandle.createWritable();
             await writable.write(blob);
             await writable.close();
             onLogEntry({
               time: new Date().toLocaleTimeString(),
               status: "success",
-              message: `Recording saved: ${fileName}`
+              message: `Recording saved: ${finalName}`
             });
             toast.success("Recording saved to selected folder");
             return true;
@@ -212,16 +327,27 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         const saved = await saveToFolder();
         if (!saved) {
           // Fallback: ensure user still gets the recording via browser download
-          downloadBlob(blob, fileName);
+          downloadBlob(blob, finalName);
           onLogEntry({
             time: new Date().toLocaleTimeString(),
             status: "info",
-            message: `Recording downloaded: ${fileName}`
+            message: `Recording downloaded: ${finalName}`
           });
           toast.message("Recording downloaded to your default folder");
         }
         
-        stream.getTracks().forEach(track => track.stop());
+        if (canvasStreamRef.current) {
+          canvasStreamRef.current.getTracks().forEach(track => track.stop());
+          canvasStreamRef.current = null;
+        }
+        if (userStreamRef.current) {
+          userStreamRef.current.getTracks().forEach(track => track.stop());
+          userStreamRef.current = null;
+        }
+        if (overlayRAFRef.current) {
+          cancelAnimationFrame(overlayRAFRef.current);
+          overlayRAFRef.current = null;
+        }
         
         onLogEntry({
           time: new Date().toLocaleTimeString(),

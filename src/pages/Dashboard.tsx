@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { LogOut, Camera, User, PackageCheck, PackageX } from "lucide-react";
+import { LogOut, Camera, User, PackageCheck, PackageX, LifeBuoy, Phone, Mail, QrCode, Video, HardDrive, FileArchive } from "lucide-react";
 import logoUrl from "../../logo.png";
 
 interface DashboardProps {
@@ -59,51 +59,63 @@ const Dashboard = ({ onLogout }: DashboardProps) => {
         </header>
 
         {/* Content */}
-        <main className="container mx-auto px-8 py-10 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-          {/* Profile Card */}
-          <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-lg)]">
-            <div className="flex items-center gap-3 mb-4">
+        <main className="container mx-auto px-8 py-10 grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
+          {/* Account & Support (Combined) */}
+          <div className="bg-[var(--glass-medium)] backdrop-blur-3xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-glow)] hover:bg-[var(--glass-hover)] transition-all duration-300 flex flex-col h-full">
+            <div className="flex items-center gap-3 mb-6">
               <div className="p-2 rounded-xl bg-primary/10 border border-primary/20">
                 <User className="w-5 h-5 text-primary" />
               </div>
-              <h2 className="text-lg font-semibold">Profile</h2>
+              <h2 className="text-lg font-semibold">Account & Support</h2>
             </div>
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p><span className="text-foreground font-medium">Name:</span> {user?.displayName ?? "—"}</p>
-              <p><span className="text-foreground font-medium">Email:</span> {user?.email ?? "—"}</p>
-              <p><span className="text-foreground font-medium">Username:</span> {user?.username ?? "—"}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+              <div className="rounded-2xl bg-[var(--glass-light)] border border-[var(--glass-border)] p-4">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><User className="w-3.5 h-3.5" /> <span>Name</span></div>
+                <div className="text-sm text-foreground font-medium truncate">{user?.displayName ?? "—"}</div>
+              </div>
+              <div className="rounded-2xl bg-[var(--glass-light)] border border-[var(--glass-border)] p-4">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><Mail className="w-3.5 h-3.5" /> <span>Email</span></div>
+                <div className="text-sm text-foreground font-medium truncate">{user?.email ?? "—"}</div>
+              </div>
+              <div className="rounded-2xl bg-[var(--glass-light)] border border-[var(--glass-border)] p-4 sm:col-span-2">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><User className="w-3.5 h-3.5" /> <span>Username</span></div>
+                <div className="text-sm text-foreground font-medium truncate">{user?.username ?? "—"}</div>
+              </div>
             </div>
-            <div className="mt-6">
-              <Button variant="glass-white" className="h-9 px-4 text-sm font-medium">Edit Credentials</Button>
+            <div className="rounded-2xl bg-[var(--glass-light)] border border-[var(--glass-border)] p-6 mt-auto">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="p-2 rounded-xl bg-primary/10 border border-primary/20">
+                  <LifeBuoy className="w-4 h-4 text-primary" />
+                </div>
+                <h3 className="text-sm font-semibold">Technical Support</h3>
+              </div>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p className="flex items-center gap-2"><Phone className="w-4 h-4 text-primary" /> <span className="text-foreground font-medium">+1 (555) 010‑0001</span></p>
+                <p className="flex items-center gap-2"><Mail className="w-4 h-4 text-primary" /> <span className="text-foreground font-medium">support@shipsight.demo</span></p>
+              </div>
             </div>
           </div>
 
           {/* VMS Access */}
-          <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-lg)]">
+          <div className="bg-[var(--glass-medium)] backdrop-blur-3xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-glow)] hover:bg-[var(--glass-hover)] transition-all duration-300 flex flex-col h-full">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 rounded-xl bg-primary/10 border border-primary/20">
                 <Camera className="w-5 h-5 text-primary" />
               </div>
               <h2 className="text-lg font-semibold">Video Management System (VMS)</h2>
             </div>
-            <p className="text-sm text-muted-foreground mb-6">Access camera, barcode scanning, and recording controls.</p>
-            <Button variant="glass-white" className="w-full h-12 px-6 text-base font-semibold" onClick={() => navigate("/vms")}>Go to VMS</Button>
+            <p className="text-sm text-muted-foreground mb-4">Control camera, scan barcodes, and record high‑quality videos with folder organization and logs.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2"><QrCode className="w-4 h-4 text-primary" /><span>Barcode scanning</span></div>
+              <div className="flex items-center gap-2"><Video className="w-4 h-4 text-primary" /><span>Full HD recording</span></div>
+              <div className="flex items-center gap-2"><HardDrive className="w-4 h-4 text-primary" /><span>Forward/Reverse folders</span></div>
+              <div className="flex items-center gap-2"><FileArchive className="w-4 h-4 text-primary" /><span>Reverse photos ZIP</span></div>
+            </div>
+            <div className="mt-auto">
+              <Button variant="glass-white" className="w-full h-12 px-6 text-base font-semibold hover:bg-[var(--glass-hover)]" onClick={() => navigate("/vms")}>Open VMS</Button>
+            </div>
           </div>
 
-          {/* Package Flow */}
-          <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-8 shadow-[var(--shadow-lg)]">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 rounded-xl bg-primary/10 border border-primary/20">
-                <PackageCheck className="w-5 h-5 text-primary" />
-              </div>
-              <h2 className="text-lg font-semibold">Package Direction</h2>
-            </div>
-            <p className="text-sm text-muted-foreground mb-6">Choose shipment flow before proceeding to VMS.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Button variant="glass-white" className="h-12 px-6 text-base font-semibold">Forward Shipment</Button>
-              <Button variant="glass-white" className="h-12 px-6 text-base font-semibold">Return Shipment</Button>
-            </div>
-          </div>
 
           {/* Quick Actions removed per request */}
         </main>
