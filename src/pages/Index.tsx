@@ -11,6 +11,7 @@ import { RecordingControls, LogEntry, RecordingControlsRef } from "@/components/
 import { SessionLog } from "@/components/SessionLog";
 import { beepStart, beepStop } from "@/lib/beep";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -35,6 +36,7 @@ const Index = ({ onLogout }: IndexProps) => {
   const [currentRecordingBarcode, setCurrentRecordingBarcode] = useState<string>("");
   const [outputFolder, setOutputFolder] = useState<string>("");
   const [dirHandle, setDirHandle] = useState<any | null>(null);
+  const [monthDirHandle, setMonthDirHandle] = useState<any | null>(null);
   const [log, setLog] = useState<LogState>({ version: 1, updatedAt: new Date().toISOString(), barcodes: [], events: [] });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const controlsRef = useRef<RecordingControlsRef | null>(null);
@@ -53,6 +55,10 @@ const Index = ({ onLogout }: IndexProps) => {
   const [reverseZipName, setReverseZipName] = useState<string | null>(null);
   const [recordMode, setRecordMode] = useState<"forward" | "reverse">("forward");
   const [folderInitDone, setFolderInitDone] = useState(false);
+
+  const excelFileName = "session.xlsx";
+  const [monthName, setMonthName] = useState<string>("");
+  const computeMonthName = (): string => new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date());
 
   const idbOpen = (): Promise<IDBDatabase> => {
     return new Promise((resolve, reject) => {
@@ -89,6 +95,95 @@ const Index = ({ onLogout }: IndexProps) => {
     }
   };
 
+  const ensureExcelFile = async (directoryHandle: any) => {
+    try {
+      const fh = await directoryHandle.getFileHandle(excelFileName, { create: false });
+      const f = await fh.getFile();
+      const size = f.size;
+      if (size > 0) return;
+    } catch {}
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([["Date", "StartTime", "EndTime", "OrderID", "Mode", "File"]]);
+    XLSX.utils.book_append_sheet(wb, ws, "Log");
+    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const fileHandle = await directoryHandle.getFileHandle(excelFileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    await writable.close();
+  };
+
+  const readExcelRows = async (directoryHandle: any): Promise<{ Date: string; StartTime: string; EndTime: string; OrderID: string; Mode: string; File: string }[]> => {
+    try {
+      const fileHandle = await directoryHandle.getFileHandle(excelFileName, { create: true });
+      const file = await fileHandle.getFile();
+      const buf = await file.arrayBuffer();
+      if (!buf || (file.size ?? 0) === 0) return [];
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws) as any[];
+      return rows.map((r) => ({ Date: String(r["Date"] ?? ""), StartTime: String(r["StartTime"] ?? ""), EndTime: String(r["EndTime"] ?? ""), OrderID: String(r["OrderID"] ?? ""), Mode: String(r["Mode"] ?? ""), File: String(r["File"] ?? "") }));
+    } catch {
+      return [];
+    }
+  };
+
+  const upsertExcelRow = async (directoryHandleParam: any, orderId: string, mode: "forward" | "reverse", updates: { start?: string; end?: string; file?: string; date?: string }) => {
+    try {
+      const handle = directoryHandleParam ?? dirHandle;
+      if (!handle) return;
+      await ensureExcelFile(handle);
+      const fileHandle = await handle.getFileHandle(excelFileName, { create: true });
+      const file = await fileHandle.getFile();
+      const buf = await file.arrayBuffer();
+      let wb: XLSX.WorkBook;
+      if (buf && (file.size ?? 0) > 0) {
+        wb = XLSX.read(buf, { type: "array" });
+      } else {
+        wb = XLSX.utils.book_new();
+        const wsInit = XLSX.utils.aoa_to_sheet([["Date", "StartTime", "EndTime", "OrderID", "Mode", "File"]]);
+        XLSX.utils.book_append_sheet(wb, wsInit, "Log");
+      }
+      const sheetName = wb.SheetNames[0] ?? "Log";
+      let ws = wb.Sheets[sheetName];
+      if (!ws) {
+        ws = XLSX.utils.aoa_to_sheet([["Date", "StartTime", "EndTime", "OrderID", "Mode", "File"]]);
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      }
+      const existingRows = XLSX.utils.sheet_to_json(ws) as any[];
+      const idx = existingRows.findIndex((r) => String(r["OrderID"]).trim() === orderId.trim() && String(r["Mode"]).trim().toLowerCase() === mode);
+      const now = new Date();
+      const d = updates.date ?? now.toLocaleDateString();
+      const rowUpdate: any = {
+        Date: d,
+        StartTime: updates.start ?? "",
+        EndTime: updates.end ?? "",
+        OrderID: orderId,
+        Mode: mode,
+        File: updates.file ?? "",
+      };
+      if (idx >= 0) {
+        const current = existingRows[idx];
+        existingRows[idx] = {
+          Date: current["Date"] || rowUpdate.Date,
+          StartTime: rowUpdate.StartTime || current["StartTime"] || "",
+          EndTime: rowUpdate.EndTime || current["EndTime"] || "",
+          OrderID: current["OrderID"] || orderId,
+          Mode: current["Mode"] || mode,
+          File: rowUpdate.File || current["File"] || "",
+        };
+      } else {
+        existingRows.push(rowUpdate);
+      }
+      const newWs = XLSX.utils.json_to_sheet(existingRows, { header: ["Date", "StartTime", "EndTime", "OrderID", "Mode", "File"] });
+      wb.Sheets[sheetName] = newWs;
+      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const writable = await fileHandle.createWritable();
+      await writable.write(new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      await writable.close();
+    } catch {}
+  };
+
   useEffect(() => {
     const restore = async () => {
       try {
@@ -100,17 +195,22 @@ const Index = ({ onLogout }: IndexProps) => {
         }
         setDirHandle(h);
         setOutputFolder(h.name);
+        const mName = computeMonthName();
+        setMonthName(mName);
+        let mHandle: any = null;
+        try { mHandle = await h.getDirectoryHandle(mName, { create: true }); } catch {}
+        if (mHandle) setMonthDirHandle(mHandle);
         try {
           localStorage.setItem('shipsight:lastOutputFolderName', h.name);
           document.cookie = `shipsight_last_folder=${encodeURIComponent(h.name)}; path=/; max-age=31536000`;
         } catch {}
         try {
-          await h.getDirectoryHandle("forward", { create: true });
-          await h.getDirectoryHandle("reverse", { create: true });
+          const base = mHandle ?? h;
+          await base.getDirectoryHandle("forward", { create: true });
+          await base.getDirectoryHandle("reverse", { create: true });
         } catch {}
-        await loadTextLog(h);
-        const iso = new Date().toISOString();
-        await appendTextLog(`[${iso}] RESTORE folder=${h.name}`, h);
+        await ensureExcelFile(mHandle ?? h);
+        await loadExcelLog(mHandle ?? h);
         setLogEntries(prev => [...prev, { time: new Date().toLocaleTimeString(), status: "info", message: `Output folder restored: ${h.name}` }]);
       } finally {
         setFolderInitDone(true);
@@ -148,10 +248,6 @@ const Index = ({ onLogout }: IndexProps) => {
       return;
     }
     const code = barcode.trim();
-    try {
-      const iso = new Date().toISOString();
-      await appendTextLog(`[${iso}] ${opts?.retake ? 'PHOTO_RETAKE' : 'PHOTO'} barcode=${code} tag=${tag}`);
-    } catch { void 0; }
     setLogEntries(prev => [
       ...prev,
       {
@@ -180,11 +276,12 @@ const Index = ({ onLogout }: IndexProps) => {
 
   const saveSnapshotToFolder = async (code: string, tag: string, dataUrl: string): Promise<string | null> => {
     try {
-      if (!dirHandle) return null;
+      const baseDir = monthDirHandle ?? dirHandle;
+      if (!baseDir) return null;
       const mime = dataUrl.substring(5, dataUrl.indexOf(";")); // e.g., image/jpeg or image/png
       const ext = mime.includes("jpeg") ? "jpg" : mime.includes("png") ? "png" : "jpg";
       const fname = `${code}_${tag}.${ext}`;
-      const fileHandle = await dirHandle.getFileHandle(fname, { create: true });
+      const fileHandle = await baseDir.getFileHandle(fname, { create: true });
       const writable = await fileHandle.createWritable();
       // Convert dataUrl to Blob
       const blob = await (await fetch(dataUrl)).blob();
@@ -249,9 +346,10 @@ const Index = ({ onLogout }: IndexProps) => {
   };
 
   const saveZipToFolder = async (blob: Blob, fname: string) => {
-    if (!dirHandle) return false;
+    const baseDir = monthDirHandle ?? dirHandle;
+    if (!baseDir) return false;
     try {
-      const reverseDir = await dirHandle.getDirectoryHandle("reverse", { create: true });
+      const reverseDir = await baseDir.getDirectoryHandle("reverse", { create: true });
       const fileHandle = await reverseDir.getFileHandle(fname, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(blob);
@@ -292,10 +390,9 @@ const Index = ({ onLogout }: IndexProps) => {
       },
     ]);
     try {
-      const iso = new Date().toISOString();
       const code = barcode.trim();
       if (saved) {
-        await appendTextLog(`[${iso}] ZIP_SAVED barcode=${code} file=${reverseZipName} folder=reverse`);
+        await upsertExcelRow(monthDirHandle ?? dirHandle, code, "reverse", { end: new Date().toLocaleTimeString() });
       }
     } catch { void 0; }
 
@@ -374,21 +471,24 @@ const Index = ({ onLogout }: IndexProps) => {
       const directoryHandle = await window.showDirectoryPicker();
       setDirHandle(directoryHandle);
       setOutputFolder(directoryHandle.name);
+      const mName = computeMonthName();
+      setMonthName(mName);
+      let mHandle: any = null;
+      try { mHandle = await directoryHandle.getDirectoryHandle(mName, { create: true }); } catch {}
+      if (mHandle) setMonthDirHandle(mHandle);
       try {
         localStorage.setItem('shipsight:lastOutputFolderName', directoryHandle.name);
         document.cookie = `shipsight_last_folder=${encodeURIComponent(directoryHandle.name)}; path=/; max-age=31536000`;
       } catch {}
       await saveDirHandleIDB(directoryHandle);
       try {
-        await directoryHandle.getDirectoryHandle("forward", { create: true });
-        await directoryHandle.getDirectoryHandle("reverse", { create: true });
-        const iso = new Date().toISOString();
-        await appendTextLog(`[${iso}] INIT folder=forward`, directoryHandle);
-        await appendTextLog(`[${iso}] INIT folder=reverse`, directoryHandle);
+        const base = mHandle ?? directoryHandle;
+        await base.getDirectoryHandle("forward", { create: true });
+        await base.getDirectoryHandle("reverse", { create: true });
       } catch { void 0; }
 
-      // Load or initialize session.log inside selected folder
-      await loadTextLog(directoryHandle);
+      await ensureExcelFile(mHandle ?? directoryHandle);
+      await loadExcelLog(mHandle ?? directoryHandle);
       toast.success(`Output folder selected: ${directoryHandle.name}`);
       setLogEntries(prev => [...prev, {
         time: new Date().toLocaleTimeString(),
@@ -402,74 +502,40 @@ const Index = ({ onLogout }: IndexProps) => {
     }
   };
 
-  const loadTextLog = async (directoryHandle: any) => {
+  const loadExcelLog = async (directoryHandle: any) => {
     try {
-      const fileHandle = await directoryHandle.getFileHandle("session.log", { create: true });
-      const file = await fileHandle.getFile();
-      const text = await file.text();
+      await ensureExcelFile(directoryHandle);
+      const rows = await readExcelRows(directoryHandle);
       const usedBarcodes: string[] = [];
-      const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
       const historicalEntries: LogEntry[] = [];
-      for (const line of lines) {
-        // Extract barcode list
-        const match = line.match(/barcode=([^\s]+)/i);
-        if (match && match[1]) {
-          const code = match[1].trim();
+      for (const r of rows) {
+        const code = r.OrderID?.trim();
+        if (code) {
           if (!usedBarcodes.includes(code)) usedBarcodes.push(code);
-        }
-        // Parse known log events to display in Session Log
-        const tsMatch = line.match(/^\[(.*?)\]/);
-        const ts = tsMatch ? new Date(tsMatch[1]) : new Date();
-        const timeStr = ts.toLocaleTimeString();
-        if (/RESERVED\s+barcode=/i.test(line)) {
-          const m = line.match(/barcode=([^\s]+)/i);
-          const code = m ? m[1] : "";
-          historicalEntries.push({ time: timeStr, status: "info", message: `Reserved barcode: ${code}` });
-          continue;
-        }
-        if (/START\s+barcode=/i.test(line)) {
-          const m = line.match(/barcode=([^\s]+)/i);
-          const code = m ? m[1] : "";
-          historicalEntries.push({ time: timeStr, status: "info", message: `Started recording for barcode: ${code}` });
-          continue;
-        }
-        if (/STOP\s+barcode=/i.test(line)) {
-          const m = line.match(/barcode=([^\s]+)/i);
-          const code = m ? m[1] : "";
-          historicalEntries.push({ time: timeStr, status: "success", message: `Recording stopped for barcode: ${code}` });
-          continue;
-        }
-        if (/SAVED\s+barcode=/i.test(line)) {
-          const mFile = line.match(/file=([^\s]+)/i);
-          const fname = mFile ? mFile[1] : "file.mp4";
-          historicalEntries.push({ time: timeStr, status: "success", message: `Recording saved: ${fname}` });
-          continue;
+          const modeInfo = r.Mode || "forward";
+          const timesInfo = `${r.StartTime || ""}${r.EndTime ? ` → ${r.EndTime}` : ""}`.trim();
+          const fileInfo = r.File ? ` — ${r.File}` : "";
+          historicalEntries.push({ time: r.StartTime || new Date().toLocaleTimeString(), status: "info", message: `Order ${code}: ${modeInfo}${fileInfo}${timesInfo ? ` (${timesInfo})` : ""}` });
         }
       }
-      // Load historical entries into UI
       if (historicalEntries.length > 0) {
         setLogEntries(prev => [...historicalEntries, ...prev]);
       }
       setLog({ version: 1, updatedAt: new Date().toISOString(), barcodes: usedBarcodes, events: historicalEntries });
     } catch (e) {
-      console.error("Failed to load session.log", e);
-      toast.error("Unable to access session log file");
+      console.error("Failed to load session.xlsx", e);
+      toast.error("Unable to access Excel log file");
     }
   };
 
-  const appendTextLog = async (line: string, directoryHandleParam?: any) => {
+  const isOrderUsedInExcel = async (code: string, mode: "forward" | "reverse"): Promise<boolean> => {
     try {
-      const handle = directoryHandleParam ?? dirHandle;
-      if (!handle) return;
-      const fileHandle = await handle.getFileHandle("session.log", { create: true });
-      const file = await fileHandle.getFile();
-      const existing = await file.text();
-      const writable = await fileHandle.createWritable();
-      const next = existing && existing.length > 0 ? `${existing}\n${line}` : line;
-      await writable.write(next);
-      await writable.close();
-    } catch (e) {
-      console.error("Failed to append to session.log", e);
+      const base = monthDirHandle ?? dirHandle;
+      if (!base) return false;
+      const rows = await readExcelRows(base);
+      return rows.some((r) => String(r.OrderID).trim() === code.trim() && String(r.Mode).trim().toLowerCase() === mode);
+    } catch {
+      return false;
     }
   };
 
@@ -483,17 +549,12 @@ const Index = ({ onLogout }: IndexProps) => {
     let usedReverse = false;
     try {
       if (dirHandle) {
-        const fh = await dirHandle.getFileHandle("session.log", { create: true });
-        const f = await fh.getFile();
-        const text = await f.text();
-        const fwdStart = new RegExp(`\\bSTART\\b[^\n]*barcode=${normalized}[^\n]*folder=forward`, "i");
-        const fwdSaved = new RegExp(`\\bSAVED\\b[^\n]*barcode=${normalized}[^\n]*folder=forward`, "i");
-        const revStart = new RegExp(`\\bSTART\\b[^\n]*barcode=${normalized}[^\n]*folder=reverse`, "i");
-        const revSaved = new RegExp(`\\bSAVED\\b[^\n]*barcode=${normalized}[^\n]*folder=reverse`, "i");
-        usedForward = fwdStart.test(text) || fwdSaved.test(text);
-        usedReverse = revStart.test(text) || revSaved.test(text);
+        const base = monthDirHandle ?? dirHandle;
+        const rows = await readExcelRows(base);
+        usedForward = rows.some((r) => String(r.OrderID).trim() === normalized && String(r.Mode).trim().toLowerCase() === "forward");
+        usedReverse = rows.some((r) => String(r.OrderID).trim() === normalized && String(r.Mode).trim().toLowerCase() === "reverse");
       }
-    } catch { }
+    } catch {}
     if (mode === "forward" && usedForward) {
       toast.error("Barcode already used for forward recording");
       return false;
@@ -504,7 +565,7 @@ const Index = ({ onLogout }: IndexProps) => {
     }
     const updated: LogState = { version: 1, updatedAt: new Date().toISOString(), barcodes: [...log.barcodes, normalized], events: log.events };
     setLog(updated);
-    await appendTextLog(`[${new Date().toISOString()}] RESERVED barcode=${normalized} folder=${mode}`);
+    
     setLogEntries(prev => [...prev, {
       time: new Date().toLocaleTimeString(),
       status: "info",
@@ -591,29 +652,53 @@ const Index = ({ onLogout }: IndexProps) => {
 
   const downloadLogFile = async () => {
     try {
-      // Read the session log file in folder if available
       if (dirHandle) {
-        const fileHandle = await dirHandle.getFileHandle("session.log", { create: true });
+        const baseDir = monthDirHandle ?? dirHandle;
+        await ensureExcelFile(baseDir);
+        const fileHandle = await baseDir.getFileHandle(excelFileName, { create: true });
         const file = await fileHandle.getFile();
-        const text = await file.text();
-        const blob = new Blob([text || ""], { type: "text/plain" });
+        const buf = await file.arrayBuffer();
+        const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `session.log`;
+        a.download = `session.xlsx`;
         a.click();
       } else {
-        const text = log.events.map(e => `[${new Date().toISOString()}] EVENT status=${e.status} message="${e.message}"`).join("\n");
-        const blob = new Blob([text], { type: "text/plain" });
+        const wb = XLSX.utils.book_new();
+        const header = [["Date", "StartTime", "EndTime", "OrderID", "Mode"]];
+        const grouped: Record<string, { Date: string; StartTime: string; EndTime: string; OrderID: string; Mode: string }> = {};
+        for (const e of log.events) {
+          const mOrder = e.message.match(/barcode:\s*(\S+)/i) || e.message.match(/Order\s+(\S+):/i);
+          const order = mOrder ? mOrder[1] : "";
+          const mode = e.message.toLowerCase().includes("reverse") ? "reverse" : "forward";
+          const key = `${order}|${mode}`;
+          if (!grouped[key]) grouped[key] = { Date: new Date().toLocaleDateString(), StartTime: "", EndTime: "", OrderID: order, Mode: mode };
+          if (/Started recording for barcode:/i.test(e.message)) {
+            grouped[key].StartTime = e.time;
+            grouped[key].Date = new Date().toLocaleDateString();
+          }
+          if (e.message.startsWith("Recording saved:")) {
+            grouped[key].EndTime = e.time;
+          }
+          if (e.message.startsWith("ZIP saved:")) {
+            grouped[key].EndTime = e.time;
+          }
+        }
+        const rows = Object.values(grouped).map((r) => [r.Date, r.StartTime, r.EndTime, r.OrderID, r.Mode]);
+        const ws = XLSX.utils.aoa_to_sheet([...header, ...rows]);
+        XLSX.utils.book_append_sheet(wb, ws, "Log");
+        const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+        const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `session.log`;
+        a.download = `session.xlsx`;
         a.click();
       }
     } catch (e) {
       console.error("Download log failed", e);
-      toast.error("Failed to download log file");
+      toast.error("Failed to download Excel log file");
     }
   };
 
@@ -627,21 +712,21 @@ const Index = ({ onLogout }: IndexProps) => {
       const m = entry.message.match(/Started recording for barcode:\s*(\S+)/i);
       if (m) {
         setCurrentRecordingBarcode(m[1]);
-        appendTextLog(`[${iso}] START barcode=${m[1]} folder=${recordMode}`).catch(() => {});
+        upsertExcelRow(monthDirHandle ?? dirHandle, m[1], recordMode, { date: new Date().toLocaleDateString(), start: entry.time }).catch(() => {});
       }
       return;
     }
     if (/Recording stopped for barcode:/i.test(entry.message)) {
       const m = entry.message.match(/Recording stopped for barcode:\s*(\S+)/i);
       if (m) {
-        appendTextLog(`[${iso}] STOP barcode=${m[1]} folder=${recordMode}`).catch(() => {});
+        upsertExcelRow(monthDirHandle ?? dirHandle, m[1], recordMode, { end: entry.time }).catch(() => {});
       }
       return;
     }
     if (entry.message.startsWith("Recording saved:")) {
       const fname = entry.message.replace("Recording saved:", "").trim();
       const bc = fname.replace(/\.(mp4|webm)$/i, "").trim();
-      appendTextLog(`[${iso}] SAVED barcode=${bc} file=${fname} folder=${recordMode}`).catch(() => {});
+      upsertExcelRow(monthDirHandle ?? dirHandle, bc, recordMode, { end: entry.time }).catch(() => {});
       return;
     }
   };
@@ -751,7 +836,7 @@ const Index = ({ onLogout }: IndexProps) => {
                     enabled={Boolean(outputFolder)}
                     onReserveBarcode={(code) => reserveBarcode(code, recordMode)}
                     onStartBarcode={handleSubmitForwardBarcode}
-                    directoryHandle={dirHandle}
+                    directoryHandle={monthDirHandle ?? dirHandle}
                     subfolder={recordMode}
                   />
                 </div>
@@ -764,6 +849,7 @@ const Index = ({ onLogout }: IndexProps) => {
                   enabled={Boolean(outputFolder)} 
                   isRecording={isRecording}
                   elapsedTime={elapsedTime}
+                  directoryHandle={monthDirHandle ?? dirHandle}
                   recordMode={recordMode}
                   overlayText={currentRecordingBarcode}
                 />
