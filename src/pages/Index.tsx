@@ -236,12 +236,30 @@ const Index = ({ onLogout }: IndexProps) => {
       toast.error("Select output folder before capturing photos");
       return;
     }
-    if (!isRecording) {
-      const started = await handleSubmitBarcode(barcode.trim());
-      if (!started) {
-        return;
-      }
+    // Block duplicate reverse photos for a barcode already used in reverse mode (unless part of current session)
+    if (showReversePanel) {
+      const code = barcode.trim();
+      try {
+        const used = await isOrderUsedInExcel(code, "reverse");
+        const active = (recordMode === "reverse" && currentRecordingBarcode === code) || Object.keys(reverseImages).length > 0;
+        if (used && !active) {
+          toast.error("Barcode already used in reverse; photos not allowed");
+          setLogEntries(prev => [
+            ...prev,
+            {
+              time: new Date().toLocaleTimeString(),
+              status: "error",
+              message: `Reverse photos blocked for duplicate barcode: ${code}`,
+            },
+          ]);
+          return;
+        }
+        if (!used && Object.keys(reverseImages).length === 0 && !opts?.retake) {
+          await upsertExcelRow(monthDirHandle ?? dirHandle, code, "reverse", { date: new Date().toLocaleDateString(), start: new Date().toLocaleTimeString() });
+        }
+      } catch { void 0; }
     }
+    
     const dataUrl = cameraRef.current?.captureSnapshot();
     if (!dataUrl) {
       toast.error("Unable to capture snapshot");
@@ -435,7 +453,9 @@ const Index = ({ onLogout }: IndexProps) => {
     }
     setShowReversePanel(opening);
     if (!opening) {
-      setRecordMode("forward");
+      if (!isRecording || recordMode !== "reverse") {
+        setRecordMode("forward");
+      }
     }
   };
 
@@ -650,6 +670,7 @@ const Index = ({ onLogout }: IndexProps) => {
     return false;
   };
 
+
   const downloadLogFile = async () => {
     try {
       if (dirHandle) {
@@ -812,7 +833,7 @@ const Index = ({ onLogout }: IndexProps) => {
               <div className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-3xl p-5 shadow-[var(--shadow-lg)]">
                 <BarcodeInput 
                   onBarcodeChange={setBarcode} 
-                  onSubmitBarcode={handleSubmitForwardBarcode}
+                  onSubmitBarcode={handleSubmitBarcode}
                   isRecording={isRecording}
                 />
                 <div className="mt-4">
@@ -835,7 +856,7 @@ const Index = ({ onLogout }: IndexProps) => {
                     onLogEntry={handleLogEntry}
                     enabled={Boolean(outputFolder)}
                     onReserveBarcode={(code) => reserveBarcode(code, recordMode)}
-                    onStartBarcode={handleSubmitForwardBarcode}
+                    onStartBarcode={handleSubmitBarcode}
                     directoryHandle={monthDirHandle ?? dirHandle}
                     subfolder={recordMode}
                   />
@@ -891,7 +912,7 @@ const Index = ({ onLogout }: IndexProps) => {
                     onClick={toggleReversePanel}
                     disabled={isRecording && recordMode === "forward"}
                   >
-                    {showReversePanel ? "Hide Reverse Photos" : "Capture Reverse Photos"}
+                    {showReversePanel ? "Hide Reverse Mode" : "Reverse Capture Mode"}
                   </Button>
                 </div>
                 {showReversePanel && (
@@ -899,6 +920,9 @@ const Index = ({ onLogout }: IndexProps) => {
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="text-sm font-semibold">Capture Reverse Photos</h3>
                       <span className="text-xs text-muted-foreground">Front, Back, Left, Right, Top, Bottom</span>
+                    </div>
+                    <div className="space-y-3 mb-4">
+                     
                     </div>
                     <div className="mb-3">
                       <span className="px-3 py-1 rounded-xl bg-red-500/15 text-red-400 border border-red-400/30 text-xs font-semibold">
