@@ -258,7 +258,11 @@ export const RecordingControls = forwardRef<RecordingControlsRef, RecordingContr
         let targetDir = directoryHandle;
         if (subfolder) {
           try {
-            targetDir = await directoryHandle.getDirectoryHandle(subfolder, { create: true });
+            let sf = await directoryHandle.getDirectoryHandle(subfolder, { create: true });
+            if (subfolder === "reverse") {
+              sf = await sf.getDirectoryHandle(currentCode, { create: true });
+            }
+            targetDir = sf;
           } catch (e) {
             targetDir = directoryHandle;
           }
