@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from "react";
-import JSZip from "jszip";
 import { RefreshCcw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, LogOut } from "lucide-react";
@@ -50,9 +49,7 @@ const Index = ({ onLogout }: IndexProps) => {
   const [reverseIndex, setReverseIndex] = useState(0);
   const [reverseCaptured, setReverseCaptured] = useState<Record<string, boolean>>({});
   const [reverseImages, setReverseImages] = useState<Record<string, string>>({});
-  const [showQualityAlert, setShowQualityAlert] = useState(false);
-  const [reverseZipBlob, setReverseZipBlob] = useState<Blob | null>(null);
-  const [reverseZipName, setReverseZipName] = useState<string | null>(null);
+  
   const [recordMode, setRecordMode] = useState<"forward" | "reverse">("forward");
   const [folderInitDone, setFolderInitDone] = useState(false);
 
@@ -220,6 +217,10 @@ const Index = ({ onLogout }: IndexProps) => {
   }, []);
 
   const handleCapture = async (tag: string, opts?: { retake?: boolean }) => {
+    if (!isRecording) {
+      toast.error("Start video recording first");
+      return;
+    }
     // Enforce sequential capture order
     const nextTag = reverseOrder[reverseIndex];
     if (showReversePanel && !opts?.retake && tag !== nextTag) {
@@ -280,6 +281,19 @@ const Index = ({ onLogout }: IndexProps) => {
 
     // Store image for ZIP export
     setReverseImages(prev => ({ ...prev, [tag]: dataUrl }));
+    try {
+      const savedName = await saveSnapshotToFolder(code, tag, dataUrl);
+      setLogEntries(prev => [
+        ...prev,
+        {
+          time: new Date().toLocaleTimeString(),
+          status: savedName ? "success" : "error",
+          message: savedName ? `Photo saved: reverse/${code}/${savedName}` : `Failed to save photo for ${tag}`,
+          tag,
+          imageUrl: dataUrl,
+        },
+      ]);
+    } catch { void 0; }
 
     if (showReversePanel) {
       setReverseCaptured(prev => ({ ...prev, [tag]: true }));
@@ -299,7 +313,9 @@ const Index = ({ onLogout }: IndexProps) => {
       const mime = dataUrl.substring(5, dataUrl.indexOf(";")); // e.g., image/jpeg or image/png
       const ext = mime.includes("jpeg") ? "jpg" : mime.includes("png") ? "png" : "jpg";
       const fname = `${code}_${tag}.${ext}`;
-      const fileHandle = await baseDir.getFileHandle(fname, { create: true });
+      const reverseDir = await baseDir.getDirectoryHandle("reverse", { create: true });
+      const codeDir = await reverseDir.getDirectoryHandle(code, { create: true });
+      const fileHandle = await codeDir.getFileHandle(fname, { create: true });
       const writable = await fileHandle.createWritable();
       // Convert dataUrl to Blob
       const blob = await (await fetch(dataUrl)).blob();
@@ -312,55 +328,34 @@ const Index = ({ onLogout }: IndexProps) => {
     }
   };
 
-  const dataUrlToUint8 = (dataUrl: string): Uint8Array => {
-    const base64 = dataUrl.split(",")[1] || "";
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  };
-
   const completeReverseCycle = async () => {
     toast.success("Reverse photo capture complete");
     if (isRecording && controlsRef.current) {
       await controlsRef.current.stop();
     }
     try {
-      const zip = new JSZip();
       const code = barcode.trim();
-      for (const tag of reverseOrder) {
-        const img = reverseImages[tag];
-        if (img) {
-          const bytes = dataUrlToUint8(img);
-          zip.file(`${code}_${tag}.jpg`, bytes);
-        }
+      const baseDir = monthDirHandle ?? dirHandle;
+      if (baseDir) {
+        const reverseDir = await baseDir.getDirectoryHandle("reverse", { create: true });
+        await reverseDir.getDirectoryHandle(code, { create: true });
       }
-      const blob = await zip.generateAsync({ type: "blob" });
-      const fname = `${code}-reverse.zip`;
-      setReverseZipBlob(blob);
-      setReverseZipName(fname);
+      await upsertExcelRow(monthDirHandle ?? dirHandle, code, "reverse", { end: new Date().toLocaleTimeString(), file: `/${monthName}/reverse/${code}/` });
       setLogEntries(prev => [
         ...prev,
         {
           time: new Date().toLocaleTimeString(),
           status: "success",
-          message: `Reverse photos ready: ${fname}`,
+          message: `Reverse assets saved to folder: reverse/${code}`,
         },
       ]);
-      // Show quality confirmation alert
-      setShowQualityAlert(true);
     } catch (e) {
-      console.error("ZIP generation error", e);
-      toast.error("Failed to prepare reverse photos ZIP");
-      setLogEntries(prev => [
-        ...prev,
-        {
-          time: new Date().toLocaleTimeString(),
-          status: "error",
-          message: `Failed to prepare reverse photos ZIP`,
-        },
-      ]);
+      console.error("Finalize reverse error", e);
+      toast.error("Failed to finalize reverse capture");
     }
+    setReverseIndex(0);
+    setReverseCaptured({});
+    setReverseImages({});
   };
 
   const saveZipToFolder = async (blob: Blob, fname: string) => {
@@ -379,65 +374,7 @@ const Index = ({ onLogout }: IndexProps) => {
     }
   };
 
-  const downloadBlob = (blob: Blob, fname: string) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fname;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  };
-
-  const handleQualityChoice = async (choice: "fine" | "email") => {
-    if (!reverseZipBlob || !reverseZipName) {
-      toast.error("ZIP not ready");
-      return;
-    }
-    // Save strictly to the selected folder, no fallback download
-    if (!dirHandle) {
-      toast.error("Select output folder to save ZIP");
-      return;
-    }
-    const saved = await saveZipToFolder(reverseZipBlob, reverseZipName);
-    setLogEntries(prev => [
-      ...prev,
-      {
-        time: new Date().toLocaleTimeString(),
-        status: saved ? "success" : "error",
-        message: saved ? `ZIP saved: ${reverseZipName}` : `Failed to save ZIP`,
-      },
-    ]);
-    try {
-      const code = barcode.trim();
-      if (saved) {
-        await upsertExcelRow(monthDirHandle ?? dirHandle, code, "reverse", { end: new Date().toLocaleTimeString() });
-      }
-    } catch { void 0; }
-
-    if (choice === "email") {
-      const code = barcode.trim();
-      const subject = encodeURIComponent(`Reverse photos for ${code}`);
-      const body = encodeURIComponent(`Please find the ZIP file (${reverseZipName}). If not attached automatically, it has been downloaded on your device.`);
-      window.location.href = `mailto:?subject=${subject}&body=${body}`;
-      toast.message("Email compose opened");
-      setLogEntries(prev => [
-        ...prev,
-        {
-          time: new Date().toLocaleTimeString(),
-          status: "info",
-          message: `Email compose opened for ${code}`,
-        },
-      ]);
-    }
-
-    // Reset for next cycle
-    setShowQualityAlert(false);
-    setReverseIndex(0);
-    setReverseCaptured({});
-    setReverseImages({});
-    setReverseZipBlob(null);
-    setReverseZipName(null);
-  };
+  
 
   const toggleReversePanel = async () => {
     const opening = !showReversePanel;
@@ -746,8 +683,11 @@ const Index = ({ onLogout }: IndexProps) => {
     }
     if (entry.message.startsWith("Recording saved:")) {
       const fname = entry.message.replace("Recording saved:", "").trim();
-      const bc = fname.replace(/\.(mp4|webm)$/i, "").trim();
-      upsertExcelRow(monthDirHandle ?? dirHandle, bc, recordMode, { end: entry.time }).catch(() => {});
+      const bc = currentRecordingBarcode || fname.replace(/\.(mp4|webm)$/i, "").trim();
+      const path = recordMode === "reverse"
+        ? `/${monthName}/reverse/${bc}/${fname}`
+        : `/${monthName}/forward/${fname}`;
+      upsertExcelRow(monthDirHandle ?? dirHandle, bc, recordMode, { end: entry.time, file: path }).catch(() => {});
       return;
     }
   };
@@ -933,8 +873,8 @@ const Index = ({ onLogout }: IndexProps) => {
                       {reverseOrder.map((t, idx) => {
                         const isNext = idx === reverseIndex;
                         const isDone = Boolean(reverseCaptured[t]);
-                        const captureDisabled = (!isNext || isDone) || (isRecording && recordMode === "forward");
-                        const retakeDisabled = (!isDone) || (isRecording && recordMode === "forward");
+                        const captureDisabled = (!isNext || isDone) || !isRecording || (recordMode === "forward");
+                        const retakeDisabled = (!isDone) || !isRecording || (recordMode === "forward");
                         return (
                           <div key={t} className="flex gap-2 items-center">
                             <Button
@@ -967,32 +907,6 @@ const Index = ({ onLogout }: IndexProps) => {
           </div>
         </main>
       </div>
-      {showQualityAlert && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-          <div className="w-11/12 max-w-lg rounded-2xl bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)] p-5 md:p-6 shadow-[var(--shadow-lg)]">
-            <div className="text-lg font-bold md:text-xl mb-3 text-foreground text-center">Confirm Package</div>
-            <p className="text-sm md:text-base text-muted-foreground mb-5 text-center">
-              Is the package all right, or would you like to email the seller with the photos?
-            </p>
-            <div className="flex flex-col md:flex-row gap-3 md:justify-center">
-              <Button
-                variant="glass-white"
-                className="h-11 w-full md:flex-1"
-                onClick={() => handleQualityChoice("fine")}
-              >
-                {"It's Fine — Save & Download"}
-              </Button>
-              <Button
-                variant="glass-white"
-                className="h-11 w-full md:flex-1"
-                onClick={() => handleQualityChoice("email")}
-              >
-                {"Email Seller & Download"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
     </>
   );
