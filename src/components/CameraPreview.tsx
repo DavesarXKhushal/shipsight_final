@@ -234,7 +234,7 @@ export const CameraPreview = forwardRef<CameraPreviewRef, CameraPreviewProps>(({
             size="icon"
             onClick={saveOrDownloadSnapshot}
             title="Capture Photo"
-            disabled={!enabled || !hasCamera || (recordMode === "forward" && isRecording)}
+            disabled={!enabled || !hasCamera || !isRecording || recordMode === "forward"}
           >
             <CameraIcon className="w-4 h-4" />
           </Button>
