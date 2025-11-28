@@ -90,8 +90,9 @@ const Dashboard = ({ onLogout }: DashboardProps) => {
                 <h3 className="text-sm font-semibold">Technical Support</h3>
               </div>
               <div className="space-y-2 text-sm text-muted-foreground">
-                <p className="flex items-center gap-2"><Phone className="w-4 h-4 text-primary" /> <span className="text-foreground font-medium">+1 (555) 010‑0001</span></p>
-                <p className="flex items-center gap-2"><Mail className="w-4 h-4 text-primary" /> <span className="text-foreground font-medium">support@shipsight.demo</span></p>
+                <p className="flex items-center gap-2"><Phone className="w-4 h-4 text-primary" /> <span className="text-foreground font-medium">+91 942-666-3000</span></p>
+                <p className="flex items-center gap-2"><Phone className="w-4 h-4 text-primary" /> <span className="text-foreground font-medium">+1 (734)-288-8659</span></p>
+                <p className="flex items-center gap-2"><Mail className="w-4 h-4 text-primary" /> <span className="text-foreground font-medium">support@shipsight.in</span></p>
               </div>
             </div>
           </div>
