@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Scan } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ interface BarcodeInputProps {
 
 export const BarcodeInput = ({ onBarcodeChange, onSubmitBarcode, isRecording }: BarcodeInputProps) => {
   const [barcode, setBarcode] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -24,9 +25,10 @@ export const BarcodeInput = ({ onBarcodeChange, onSubmitBarcode, isRecording }: 
       const code = barcode.trim();
       if (!code) return;
       await onSubmitBarcode(code);
-      // Always clear after submission per workflow: input should erase
-      setBarcode("");
-      onBarcodeChange("");
+      if (inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.select();
+      }
     }
   };
 
@@ -39,6 +41,8 @@ export const BarcodeInput = ({ onBarcodeChange, onSubmitBarcode, isRecording }: 
           value={barcode}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          ref={inputRef}
+          id="barcode-input"
           // keep editable during recording per request
           className="bg-[var(--glass-light)] backdrop-blur-2xl border-[var(--glass-border)] text-foreground placeholder:text-muted-foreground/50 focus:bg-[var(--glass-medium)] focus:border-primary/50 transition-all duration-300 h-14 text-base px-5 rounded-2xl shadow-inner"
         />

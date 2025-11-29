@@ -3,12 +3,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Analytics } from '@vercel/analytics/react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import { Login } from "./pages/Login";
 import Dashboard from "@/pages/Dashboard";
+import Landing from "@/pages/Landing";
 
 const queryClient = new QueryClient();
 
@@ -76,19 +78,49 @@ const App = () => {
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          {!isAuthenticated ? (
-            <Login onLogin={handleLogin} />
-          ) : (
-            <Routes>
-              <Route path="/dashboard" element={<Dashboard onLogout={handleLogout} />} />
-              <Route path="/vms" element={<Index onLogout={handleLogout} />} />
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          )}
+          {(() => {
+            const SEOUpdater = () => {
+              const location = useLocation();
+              useEffect(() => {
+                const isVms = typeof window !== "undefined" && window.location.hostname.startsWith("vms.");
+                const title = isVms ? "ShipSight VMS | Video Management for E-commerce" : "ShipSight | E-commerce Video Management & Packing Recorder";
+                const desc = isVms
+                  ? "Secure video management system for e-commerce packing workflows. Record, search, and share barcode-linked videos."
+                  : "E-commerce video management (VMS) for packing — barcode-linked recording.";
+                const robots = isVms && location.pathname !== "/" ? "noindex,nofollow" : "index,follow";
+                const setMeta = (selector: string, attr: string, value: string) => {
+                  const el = document.querySelector(selector) as HTMLMetaElement | null;
+                  if (el) el.setAttribute(attr, value);
+                };
+                document.title = title;
+                setMeta('meta[name="description"]', "content", desc);
+                setMeta('meta[name="robots"]', "content", robots);
+                setMeta('meta[property="og:title"]', "content", title);
+                setMeta('meta[property="og:description"]', "content", desc);
+                setMeta('meta[property="og:url"]', "content", window.location.href);
+                const canonical = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+                if (canonical) canonical.setAttribute("href", window.location.origin + location.pathname);
+              }, [location.pathname]);
+              return null;
+            };
+            return <SEOUpdater />;
+          })()}
+          {(() => {
+            const isVms = typeof window !== "undefined" && window.location.hostname.startsWith("vms.");
+            const homeEl = isVms ? (isAuthenticated ? <Index onLogout={handleLogout} /> : <Login onLogin={handleLogin} />) : <Landing />;
+            const authRedirect = isVms ? "/" : "/vms";
+            return (
+              <Routes>
+                <Route path="/" element={homeEl} />
+                <Route path="/vms" element={isAuthenticated ? <Index onLogout={handleLogout} /> : <Login onLogin={handleLogin} />} />
+                <Route path="/dashboard" element={isAuthenticated ? <Dashboard onLogout={handleLogout} /> : <Navigate to={authRedirect} replace />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            );
+          })()}
         </BrowserRouter>
         <Analytics />
+        <SpeedInsights />
       </TooltipProvider>
     </QueryClientProvider>
   );

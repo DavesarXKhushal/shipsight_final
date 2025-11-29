@@ -1,8 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { LogOut, Camera, User, PackageCheck, PackageX, LifeBuoy, Phone, Mail, QrCode, Video, HardDrive, FileArchive } from "lucide-react";
+import { LogOut, Camera, User, PackageCheck, PackageX, LifeBuoy, Phone, Mail, QrCode, Video, HardDrive, FileArchive, KeyRound } from "lucide-react";
 import logoUrl from "../../logo.png";
+import { changeUserPassword } from "@/lib/utils";
+import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 interface DashboardProps {
   onLogout?: () => void;
@@ -10,6 +13,11 @@ interface DashboardProps {
 
 const Dashboard = ({ onLogout }: DashboardProps) => {
   const navigate = useNavigate();
+  const [pwOpen, setPwOpen] = useState(false);
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwSnippet, setPwSnippet] = useState<string>("");
   const user = useMemo(() => {
     try {
       const raw = localStorage.getItem("shipsight_user");
@@ -24,7 +32,38 @@ const Dashboard = ({ onLogout }: DashboardProps) => {
     navigate("/", { replace: true });
   };
 
+  const submitChangePassword = async () => {
+    const email = user?.email;
+    if (!email) return;
+    if (!newPw || newPw !== confirmPw) return;
+    const ok = await changeUserPassword(email, currentPw, newPw);
+    if (ok) {
+      setPwOpen(false);
+      setCurrentPw("");
+      setNewPw("");
+      setConfirmPw("");
+      const username = user?.username ?? "";
+      const displayName = user?.displayName ?? "";
+      setPwSnippet(`{ username: "${username}", email: "${email}", password: "${newPw}", displayName: "${displayName}" },`);
+      try {
+        const r = await fetch("/api/change-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, username, displayName, oldPassword: currentPw, newPassword: newPw }),
+        });
+        if (r.ok) {
+          toast.success("Server password updated");
+        } else {
+          toast.warning("Local Password Changed");
+        }
+      } catch {
+        toast.warning("Server update failed");
+      }
+    }
+  };
+
   return (
+    <>
     <div className="min-h-screen bg-[hsl(var(--background))] text-foreground overflow-hidden">
       {/* Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
@@ -81,6 +120,21 @@ const Dashboard = ({ onLogout }: DashboardProps) => {
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><User className="w-3.5 h-3.5" /> <span>Username</span></div>
                 <div className="text-sm text-foreground font-medium truncate">{user?.username ?? "—"}</div>
               </div>
+              <div className="sm:col-span-2">
+                <Button variant="glass-white" className="w-full h-11 px-6 text-sm font-semibold" onClick={() => setPwOpen(true)}>
+                  <KeyRound className="w-4 h-4 mr-2" /> Change Password
+                </Button>
+              </div>
+              {pwSnippet && (
+                <div className="sm:col-span-2 rounded-2xl bg-[var(--glass-light)] border border-[var(--glass-border)] p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs text-muted-foreground">Code update snippet</div>
+                    <Button variant="glass-white" className="h-8 px-3 text-xs" onClick={() => navigator.clipboard.writeText(pwSnippet)}>Copy</Button>
+                  </div>
+                  <pre className="text-xs text-foreground whitespace-pre-wrap break-words">{pwSnippet}</pre>
+                  <div className="mt-2 text-xs text-muted-foreground">Paste this into <code>src/lib/utils.ts</code> inside <code>DEFAULT_USERS_PLAINTEXT</code>.</div>
+                </div>
+              )}
             </div>
             <div className="rounded-2xl bg-[var(--glass-light)] border border-[var(--glass-border)] p-6 mt-auto">
               <div className="flex items-center gap-2 mb-3">
@@ -122,6 +176,41 @@ const Dashboard = ({ onLogout }: DashboardProps) => {
         </main>
       </div>
     </div>
+
+    <Dialog open={pwOpen} onOpenChange={setPwOpen}>
+      <DialogContent className="bg-[var(--glass-medium)] backdrop-blur-2xl border border-[var(--glass-border)]">
+        <DialogHeader>
+          <DialogTitle>Change Password</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <input
+            type="password"
+            value={currentPw}
+            onChange={(e) => setCurrentPw(e.target.value)}
+            placeholder="Current password"
+            className="w-full px-4 py-3 rounded-xl bg-[var(--glass-light)] border border-[var(--glass-border)]"
+          />
+          <input
+            type="password"
+            value={newPw}
+            onChange={(e) => setNewPw(e.target.value)}
+            placeholder="New password"
+            className="w-full px-4 py-3 rounded-xl bg-[var(--glass-light)] border border-[var(--glass-border)]"
+          />
+          <input
+            type="password"
+            value={confirmPw}
+            onChange={(e) => setConfirmPw(e.target.value)}
+            placeholder="Confirm new password"
+            className="w-full px-4 py-3 rounded-xl bg-[var(--glass-light)] border border-[var(--glass-border)]"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="glass-white" onClick={submitChangePassword}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 };
 

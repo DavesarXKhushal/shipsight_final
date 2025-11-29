@@ -3,6 +3,7 @@ import { Eye, EyeOff, Ship, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import logoUrl from "../../logo.png";
+import { verifyUserPassword } from "@/lib/utils";
 
 interface LoginProps {
   onLogin: (success: boolean) => void;
@@ -13,58 +14,20 @@ export const Login = ({ onLogin }: LoginProps) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  
 
-  // Demo user accounts with both email and username login
-  const DEMO_USERS = [
-    {
-      username: "oora",
-      email: "oora@shipsight.com",
-      password: "OoraShip2025!",
-      displayName: "Oora"
-    },
-    {
-      username: "as international",
-      email: "as.international@shipsight.com", 
-      password: "AsIntl2025!",
-      displayName: "AS International"
-    },
-    {
-      username: "ss international",
-      email: "ss.international@shipsight.com",
-      password: "SsIntl2025!",
-      displayName: "SS International"
-    },
-    {
-      username: "admin",
-      email: "admin@shipsight.com",
-      password: "AdminShip2025!",
-      displayName: "Administrator"
-    },
-    {
-      username: "rohit",
-      email: "rohit@shipsight.com",
-      password: "RohitShip2025!",
-      displayName: "Rohit"
-    }
-  ];
+  
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 600));
 
-    // Check if login matches any demo user (by email or username)
-    const user = DEMO_USERS.find(user => 
-      (email.toLowerCase() === user.email.toLowerCase() || 
-       email.toLowerCase() === user.username.toLowerCase()) && 
-      password === user.password
-    );
-
-    if (user) {
+    const result = await verifyUserPassword(email, password);
+    if (result.ok && result.user) {
       // Enforce single-device login (local session lock)
-      const lockKey = `shipsight_lock_${user.email}`;
+      const lockKey = `shipsight_lock_${result.user.email}`;
       const existingLock = localStorage.getItem(lockKey);
       if (existingLock) {
         toast.error("This account is already logged in on another device.");
@@ -76,9 +39,9 @@ export const Login = ({ onLogin }: LoginProps) => {
       // Create session lock and store current user metadata
       const sessionId = (crypto as any)?.randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random()}`;
       localStorage.setItem(lockKey, JSON.stringify({ sessionId, startedAt: Date.now() }));
-      localStorage.setItem("shipsight_user", JSON.stringify({ email: user.email, username: user.username, displayName: user.displayName }));
+      localStorage.setItem("shipsight_user", JSON.stringify({ email: result.user.email, username: result.user.username, displayName: result.user.displayName }));
 
-      toast.success(`Welcome to ShipSight, ${user.displayName}!`);
+      toast.success(`Welcome to ShipSight, ${result.user.displayName || result.user.username || result.user.email}!`);
       onLogin(true);
     } else {
       toast.error("Invalid credentials. Please try again.");
@@ -168,7 +131,9 @@ export const Login = ({ onLogin }: LoginProps) => {
                 </div>
               </div>
 
-              {/* Login Button */}
+              
+
+              {/* Action Buttons */}
               <Button
                 type="submit"
                 disabled={isLoading}
@@ -183,6 +148,7 @@ export const Login = ({ onLogin }: LoginProps) => {
                   </>
                 )}
               </Button>
+              
             </form>
 
             {/* Footer */}
